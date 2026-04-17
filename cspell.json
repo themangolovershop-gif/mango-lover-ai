@@ -58,6 +58,8 @@
     "Hinglish",
     "Shivshakti",
     "OpenRouter",
-    "Hiranandani"
+    "Hiranandani",
+    "conname",
+    "plpgsql"
   ]
 }

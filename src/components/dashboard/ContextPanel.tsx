@@ -110,7 +110,7 @@ export function ContextPanel({
                 </span>
               </div>
               <p className="text-[11px] text-white/60 line-clamp-2 leading-relaxed italic">
-                "{f.message}"
+                &ldquo;{f.message}&rdquo;
               </p>
             </div>
           ))}
