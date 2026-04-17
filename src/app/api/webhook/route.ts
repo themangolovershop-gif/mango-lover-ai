@@ -10,6 +10,7 @@ import {
 } from "@/lib/followups";
 import {
   buildSalesReply,
+  getCheckoutFallback,
   getDeterministicTransition,
   getDraftOrder,
   isLockedCheckoutState,
@@ -78,6 +79,8 @@ type WebhookResult =
 const log = {
   info: (message: string, details?: unknown) =>
     console.log(`[WH-INFO] ${message}`, details ?? ""),
+  debug: (message: string, details?: unknown) =>
+    console.log(`[WH-DEBUG] ${message}`, details ?? ""),
   warn: (message: string, details?: unknown) =>
     console.warn(`[WH-WARN] ${message}`, details ?? ""),
   error: (message: string, details?: unknown) =>
@@ -94,13 +97,18 @@ function buildSafeFallbackReply() {
 
 function verifySignature(payload: string, signature: string | null): boolean {
   const secret = process.env.WHATSAPP_APP_SECRET;
+  
   if (!secret) {
-    log.warn("WHATSAPP_APP_SECRET is not configured. Webhook signature validation skipped for now, but this is INSECURE for production.");
-    return true;
+    if (process.env.NODE_ENV === "development") {
+      log.warn("⚠️ WHATSAPP_APP_SECRET is missing. Allowing unsigned request in LOCAL DEV mode.");
+      return true;
+    }
+    log.error("❌ CRITICAL: WHATSAPP_APP_SECRET is not configured in environment. All production webhooks will be rejected.");
+    return false;
   }
 
   if (!signature) {
-    log.error("Missing x-hub-signature-256 header");
+    log.warn("⚠️ Webhook received without signature header (x-hub-signature-256).");
     return false;
   }
 
@@ -145,6 +153,32 @@ async function touchConversation(conversationId: string) {
   }
 }
 
+async function logWebhook(params: {
+  whatsapp_msg_id?: string;
+  phone?: string;
+  status: string;
+  payload?: unknown;
+  error?: string;
+  duration_ms?: number;
+}) {
+  try {
+    const { error } = await supabase.from("webhook_logs").insert({
+      whatsapp_msg_id: params.whatsapp_msg_id || null,
+      phone: params.phone || null,
+      status: params.status,
+      payload: params.payload || null,
+      error: params.error || null,
+      duration_ms: params.duration_ms || null,
+    });
+
+    if (error) {
+      log.error("Failed to persist webhook log to DB", error);
+    }
+  } catch (err) {
+    log.error("Internal error during webhook logging", err);
+  }
+}
+
 async function getOrCreateConversation(phone: string, name: string | null) {
   const { data: existingConversation, error: fetchConversationError } = await supabase
     .from("conversations")
@@ -157,26 +191,7 @@ async function getOrCreateConversation(phone: string, name: string | null) {
   }
 
   if (existingConversation) {
-    if (name && existingConversation.name !== name) {
-      const { error: nameUpdateError } = await supabase
-        .from("conversations")
-        .update({
-          name,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existingConversation.id);
-
-      if (nameUpdateError) {
-        log.warn("Conversation name update skipped", {
-          conversationId: existingConversation.id,
-          error: nameUpdateError.message,
-        });
-      } else {
-        existingConversation.name = name;
-      }
-    }
-
-    return existingConversation;
+    return { conversation: existingConversation, created: false };
   }
 
   const { data: createdConversation, error: createConversationError } = await supabase
@@ -198,7 +213,7 @@ async function getOrCreateConversation(phone: string, name: string | null) {
     phone,
   });
 
-  return createdConversation;
+  return { conversation: createdConversation, created: true };
 }
 
 async function handleInboundTextMessage(
@@ -227,245 +242,285 @@ async function handleInboundTextMessage(
     whatsappMsgId,
     preview: text.slice(0, 80),
   });
+  log.debug("incoming message", {
+    phone,
+    whatsappMsgId,
+    preview: text.slice(0, 80),
+  });
 
-  try {
-    const conversation = await getOrCreateConversation(phone, name);
+  const MAX_RETRIES = 3;
+  let attempt = 0;
+  let inboundStored = false;
 
-    const { error: insertInboundError } = await supabase.from("messages").insert({
-      conversation_id: conversation.id,
-      role: "user",
-      content: text,
-      whatsapp_msg_id: whatsappMsgId,
-    });
+  while (attempt < MAX_RETRIES) {
+    try {
+      const { conversation } = await getOrCreateConversation(phone, name);
 
-    if (insertInboundError) {
-      if (insertInboundError.code === "23505") {
-        log.info("Duplicate inbound WhatsApp message ignored", {
+      if (!inboundStored) {
+        const { error: insertInboundError } = await supabase.from("messages").insert({
+          conversation_id: conversation.id,
+          role: "user",
+          content: text,
+          whatsapp_msg_id: whatsappMsgId,
+        });
+
+        if (insertInboundError) {
+          if (insertInboundError.code === "23505") {
+            log.info("Duplicate inbound WhatsApp message ignored", {
+              whatsappMsgId,
+              phone,
+            });
+            return {
+              status: "duplicate",
+              conversation_id: conversation.id,
+              whatsapp_msg_id: whatsappMsgId,
+            };
+          }
+          throw new Error(`Inbound message insert failed: ${insertInboundError.message}`);
+        }
+
+        inboundStored = true;
+
+        log.info("Inbound message stored", {
+          conversationId: conversation.id,
           whatsappMsgId,
-          phone,
+        });
+
+        await cancelPendingFollowUps(conversation.id, "customer_replied");
+      } else {
+        log.debug("Retrying webhook flow after optimistic lock conflict", {
+          conversationId: conversation.id,
+          whatsappMsgId,
+          attempt: attempt + 1,
+        });
+      }
+
+      if (conversation.mode === "human") {
+        await touchConversation(conversation.id);
+        log.info("Conversation in human mode, skipping automation", {
+          conversationId: conversation.id,
         });
         return {
-          status: "duplicate",
+          status: "stored_for_human",
           conversation_id: conversation.id,
           whatsapp_msg_id: whatsappMsgId,
         };
       }
 
-      throw new Error(`Inbound message insert failed: ${insertInboundError.message}`);
-    }
-
-    log.info("Inbound message stored", {
-      conversationId: conversation.id,
-      whatsappMsgId,
-    });
-
-    await cancelPendingFollowUps(conversation.id, "customer_replied");
-
-    if (conversation.mode === "human") {
-      await touchConversation(conversation.id);
-      log.info("Conversation in human mode, skipping automation", {
+      const stateBefore = normalizeSalesStateValue(
+        (conversation as Conversation & { sales_state?: string }).sales_state
+      );
+      log.debug("state before", {
         conversationId: conversation.id,
+        stateBefore,
       });
-      return {
-        status: "stored_for_human",
-        conversation_id: conversation.id,
-        whatsapp_msg_id: whatsappMsgId,
+      const typedConversation = {
+        ...(conversation as Conversation),
+        sales_state: stateBefore,
       };
-    }
+      
+      const parsed = parseSalesInput(text);
+      const draftOrderBefore = await getDraftOrder(typedConversation.id);
 
-    const stateBefore = normalizeSalesStateValue(
-      (conversation as Conversation & { sales_state?: string }).sales_state
-    );
-    const typedConversation = {
-      ...(conversation as Conversation),
-      sales_state: stateBefore,
-    };
-    const parsed = parseSalesInput(text);
-    const draftOrderBefore = await getDraftOrder(typedConversation.id);
+      const transition = getDeterministicTransition({
+        conversation: typedConversation,
+        parsed,
+        order: draftOrderBefore,
+        rawMessage: text,
+      });
+      log.debug("next state", {
+        conversationId: typedConversation.id,
+        stateBefore,
+        nextState: transition.nextState,
+      });
 
-    const transition = getDeterministicTransition({
-      conversation: typedConversation,
-      parsed,
-      order: draftOrderBefore,
-      rawMessage: text,
-    });
+      const draftOrderAfter = await persistDraftOrderPatch({
+        conversation: typedConversation,
+        existingOrder: draftOrderBefore,
+        orderPatch: transition.orderPatch,
+      });
 
-    const draftOrderAfter = await persistDraftOrderPatch({
-      conversation: typedConversation,
-      existingOrder: draftOrderBefore,
-      orderPatch: transition.orderPatch,
-    });
-    const salesState = transition.nextState;
-    const leadTag = transition.leadTag;
+      const salesState = transition.nextState;
+      const leadTag = transition.leadTag;
+      const resetFollowUpCount = stateBefore !== salesState;
 
-    const resetFollowUpCount = stateBefore !== salesState;
+      const conversationAfter: Conversation = {
+        ...typedConversation,
+        sales_state: salesState,
+        lead_tag: leadTag,
+        last_customer_intent: transition.lastCustomerIntent,
+        follow_up_count: resetFollowUpCount ? 0 : typedConversation.follow_up_count,
+        name: (name && conversation.name !== name) ? name : conversation.name,
+        updated_at: new Date().toISOString(),
+      };
 
-    await updateConversationSalesFields({
-      conversationId: typedConversation.id,
-      salesState,
-      leadTag,
-      lastCustomerIntent: transition.lastCustomerIntent,
-      resetFollowUpCount,
-    });
+      const deterministicReply = buildSalesReply(
+        conversationAfter,
+        parsed,
+        draftOrderAfter,
+        text
+      );
+      log.debug("deterministicHit", {
+        conversationId: typedConversation.id,
+        deterministicHit: deterministicReply !== null,
+      });
+      
+      const checkoutLocked = isLockedCheckoutState(stateBefore) || isLockedCheckoutState(salesState);
+      log.debug("AI blocked", {
+        conversationId: typedConversation.id,
+        aiBlocked: deterministicReply === null && checkoutLocked,
+        checkoutLocked,
+      });
+      let replyText = "";
+      let replyButtons: InteractiveButton[] | undefined = undefined;
 
-    const conversationAfter: Conversation = {
-      ...typedConversation,
-      sales_state: salesState,
-      lead_tag: leadTag,
-      last_customer_intent: transition.lastCustomerIntent,
-      follow_up_count: resetFollowUpCount ? 0 : typedConversation.follow_up_count,
-    };
-
-    const deterministicReply = buildSalesReply(
-      conversationAfter,
-      parsed,
-      draftOrderAfter,
-      text
-    );
-    const checkoutLocked =
-      isLockedCheckoutState(stateBefore) || isLockedCheckoutState(salesState);
-    const deterministicHit = deterministicReply !== null;
-
-    log.info("Deterministic sales evaluation", {
-      conversationId: typedConversation.id,
-      rawInput: text,
-      stateBefore,
-      stateAfter: salesState,
-      deterministicHit,
-      aiBlockedBecauseCheckout: checkoutLocked,
-      intent: parsed.intent,
-    });
-
-    let replyText = "";
-    let replyButtons: InteractiveButton[] | undefined = undefined;
-    let usedAIFallback = false;
-
-    if (deterministicReply !== null) {
-      if (typeof deterministicReply === "object") {
-        replyText = deterministicReply.text;
-        replyButtons = deterministicReply.buttons;
-      } else {
-        replyText = deterministicReply;
-      }
-    } else {
-      if (checkoutLocked) {
-        replyText = "Please continue your order by sharing the next detail.";
-      } else {
-        const { data: history, error: historyError } = await supabase
-          .from("messages")
-          .select("role, content")
-          .eq("conversation_id", typedConversation.id)
-          .order("created_at", { ascending: true })
-          .limit(20);
-
-        if (historyError) {
-          throw new Error(`Conversation history fetch failed: ${historyError.message}`);
+      if (deterministicReply !== null) {
+        if (typeof deterministicReply === "object") {
+          replyText = deterministicReply.text;
+          replyButtons = deterministicReply.buttons;
+        } else {
+          replyText = deterministicReply;
         }
+      } else {
+        if (checkoutLocked) {
+          replyText = getCheckoutFallback(salesState);
+        } else {
+          const { data: history, error: historyError } = await supabase
+            .from("messages")
+            .select("role, content")
+            .eq("conversation_id", typedConversation.id)
+            .order("created_at", { ascending: true })
+            .limit(20);
 
-        log.info("AI fallback requested", {
-          conversationId: typedConversation.id,
-          historyCount: history?.length ?? 0,
-        });
+          if (historyError) throw new Error(`History fetch failed: ${historyError.message}`);
 
-        usedAIFallback = true;
-
-        try {
-          replyText = await getAIResponse(
-            (history || []).map((item) => ({
+          // AI Fallback blocked during checkout
+          try {
+            replyText = await getAIResponse((history || []).map((item) => ({
               role: item.role as "user" | "assistant",
               content: item.content,
-            }))
-          );
-        } catch (error) {
-          log.warn("AI fallback failed, using safe scripted fallback", {
-            conversationId: typedConversation.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          replyText = buildSafeFallbackReply();
+            })));
+          } catch {
+            replyText = buildSafeFallbackReply();
+          }
         }
       }
-    }
 
-    log.info("Sales engine progression", {
-      conversationId: typedConversation.id,
-      previousState: stateBefore,
-      nextState: salesState,
-      intent: parsed.intent,
-      hadDraftOrder: !!draftOrderBefore,
-      hasDraftOrder: !!draftOrderAfter,
-      usedAIFallback,
-    });
-
-    if (!replyText) {
-      replyText = "Please tell me whether you want pricing or want to place an order.";
-    }
-
-    const sendResult = await sendWhatsAppMessage(phone, replyText, replyButtons);
-    const outboundMsgId = sendResult?.messages?.[0]?.id || null;
-
-    if (!outboundMsgId) {
-      throw new Error("Meta send succeeded without an outbound message id.");
-    }
-
-    const { error: insertAssistantError } = await supabase.from("messages").insert({
-      conversation_id: typedConversation.id,
-      role: "assistant",
-      content: replyText,
-      whatsapp_msg_id: outboundMsgId,
-    });
-
-    if (insertAssistantError) {
-      throw new Error(`Assistant message insert failed: ${insertAssistantError.message}`);
-    }
-
-    const latestOrder = await getLatestDraftOrder(typedConversation.id);
-    const followUpChoice = pickAutoFollowUpTemplate({
-      conversation: conversationAfter,
-      draftOrder: latestOrder,
-    });
-    const alreadyPending = await hasPendingFollowUp(typedConversation.id);
-
-    if (followUpChoice.message && followUpChoice.delayHours && !alreadyPending) {
-      await scheduleAutoFollowUp({
+      if (!replyText) replyText = "Please tell me how I can help you today.";
+      log.debug("reply preview", {
         conversationId: typedConversation.id,
+        preview: replyText.slice(0, 120),
+        hasButtons: !!replyButtons?.length,
+        buttonCount: replyButtons?.length ?? 0,
+      });
+
+      await updateConversationSalesFields({
+        conversationId: typedConversation.id,
+        salesState,
+        leadTag,
+        lastCustomerIntent: transition.lastCustomerIntent,
+        resetFollowUpCount,
+        expectedUpdatedAt: conversation.updated_at,
+        name: (name && conversation.name !== name) ? name : undefined,
+      });
+
+      const sendResult = await sendWhatsAppMessage(phone, replyText, replyButtons);
+      const outboundMsgId = sendResult?.messages?.[0]?.id || null;
+
+      if (!outboundMsgId) throw new Error("Meta send succeeded without an outbound message id.");
+
+      const { error: insertAssistantError } = await supabase.from("messages").insert({
+        conversation_id: typedConversation.id,
+        role: "assistant",
+        content: replyText,
+        whatsapp_msg_id: outboundMsgId,
+      });
+
+      if (insertAssistantError) {
+        throw new Error(`Assistant message insert failed: ${insertAssistantError.message}`);
+      }
+
+      const latestOrder = await getLatestDraftOrder(typedConversation.id);
+      const followUpChoice = pickAutoFollowUpTemplate({
+        conversation: conversationAfter,
+        draftOrder: latestOrder,
+      });
+      const alreadyPending = await hasPendingFollowUp(typedConversation.id);
+
+      if (followUpChoice.message && followUpChoice.delayHours && !alreadyPending) {
+        await scheduleAutoFollowUp({
+          conversationId: typedConversation.id,
+          phone,
+          message: followUpChoice.message,
+          delayHours: followUpChoice.delayHours,
+          reason: followUpChoice.reason,
+        });
+      }
+
+      log.info("Webhook flow completed", {
+        conversationId: typedConversation.id,
+        outboundMsgId,
+        durationMs: Date.now() - startedAt,
+      });
+
+      const result: WebhookResult = {
+        status: "replied",
+        conversation_id: typedConversation.id,
+        outbound_meta_message_id: outboundMsgId,
+        whatsapp_msg_id: whatsappMsgId,
+      };
+
+      await logWebhook({
+        whatsapp_msg_id: whatsappMsgId,
         phone,
-        message: followUpChoice.message,
-        delayHours: followUpChoice.delayHours,
-        reason: followUpChoice.reason,
+        status: result.status,
+        duration_ms: Date.now() - startedAt,
       });
-    } else if (followUpChoice.message && alreadyPending) {
-      log.info("Skipping follow-up schedule because a pending follow-up already exists", {
-        conversationId: typedConversation.id,
-        requestedReason: followUpChoice.reason,
+
+      return result;
+    } catch (error) {
+      if (error instanceof Error && error.message === "VERSION_CONFLICT") {
+        attempt++;
+        log.warn("Version conflict detected, retrying optimization loop", { attempt, phone });
+        await new Promise(resolve => setTimeout(resolve, 150 * attempt));
+        continue;
+      }
+
+      log.error("Critical webhook failure", {
+        whatsappMsgId,
+        error: error instanceof Error ? error.message : String(error),
       });
+      
+      const errorStatus = "failed";
+      await logWebhook({
+        whatsapp_msg_id: whatsappMsgId,
+        phone,
+        status: errorStatus,
+        error: error instanceof Error ? error.message : String(error),
+        duration_ms: Date.now() - startedAt,
+      });
+
+      return {
+        status: errorStatus,
+        whatsapp_msg_id: whatsappMsgId,
+        error: error instanceof Error ? error.message : "Internal error",
+      };
     }
-
-    await touchConversation(typedConversation.id);
-
-    log.info("Webhook flow completed", {
-      conversationId: typedConversation.id,
-      outboundMsgId,
-      durationMs: Date.now() - startedAt,
-      usedAIFallback,
-    });
-
-    return {
-      status: "replied",
-      conversation_id: typedConversation.id,
-      outbound_meta_message_id: outboundMsgId,
-      whatsapp_msg_id: whatsappMsgId,
-    };
-  } catch (error) {
-    log.error("Critical webhook failure", {
-      whatsappMsgId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return {
-      status: "failed",
-      whatsapp_msg_id: whatsappMsgId,
-      error: error instanceof Error ? error.message : "Internal error",
-    };
   }
+
+  await logWebhook({
+    whatsapp_msg_id: whatsappMsgId,
+    phone,
+    status: "failed",
+    error: "Max retries exceeded for version conflict",
+    duration_ms: Date.now() - startedAt,
+  });
+
+  return {
+    status: "failed",
+    whatsapp_msg_id: whatsappMsgId,
+    error: "Max retries exceeded for version conflict",
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -489,6 +544,10 @@ export async function POST(request: NextRequest) {
 
   if (!verifySignature(rawBody, signature)) {
     log.error("Webhook signature verification failed. Request rejected.");
+    await logWebhook({
+      status: "signature_failed",
+      payload: rawBody.slice(0, 1000), // Log snippet
+    });
     return new Response("Invalid signature", { status: 401 });
   }
 
@@ -497,6 +556,11 @@ export async function POST(request: NextRequest) {
     body = JSON.parse(rawBody) as WhatsAppWebhookBody;
   } catch (error) {
     log.error("Webhook JSON parse failed", error);
+    await logWebhook({
+      status: "json_parse_failed",
+      payload: rawBody.slice(0, 1000),
+      error: error instanceof Error ? error.message : String(error),
+    });
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
 

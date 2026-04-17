@@ -51,6 +51,17 @@ create table follow_ups (
   updated_at timestamp with time zone default now()
 );
 
+create table webhook_logs (
+  id uuid default gen_random_uuid() primary key,
+  whatsapp_msg_id text,
+  phone text,
+  status text not null,
+  payload jsonb,
+  error text,
+  duration_ms integer,
+  created_at timestamp with time zone default now()
+);
+
 create index idx_messages_conversation on messages(conversation_id);
 create index idx_messages_conversation_role_created on messages(conversation_id, role, created_at desc);
 create index idx_conversations_updated on conversations(updated_at desc);
@@ -164,3 +175,41 @@ alter publication supabase_realtime add table messages;
 alter publication supabase_realtime add table conversations;
 alter publication supabase_realtime add table orders;
 alter publication supabase_realtime add table follow_ups;
+alter publication supabase_realtime add table webhook_logs;
+
+-- Atomically increment follow-up count and return the updated conversation
+create or replace function increment_follow_up_count(conv_id uuid)
+returns setof conversations
+language plpgsql
+as $$
+begin
+  return query
+  update conversations
+  set 
+    follow_up_count = follow_up_count + 1,
+    last_follow_up_sent_at = now(),
+    updated_at = now()
+  where id = conv_id
+  returning *;
+end;
+$$;
+
+-- Atomic helper for webhook locking (session level)
+-- Note: Use with caution in serverless.
+create or replace function acquire_lock(lock_id bigint)
+returns boolean
+language plpgsql
+as $$
+begin
+  return pg_try_advisory_lock(lock_id);
+end;
+$$;
+
+create or replace function release_lock(lock_id bigint)
+returns boolean
+language plpgsql
+as $$
+begin
+  return pg_advisory_unlock(lock_id);
+end;
+$$;

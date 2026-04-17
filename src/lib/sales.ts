@@ -1,4 +1,9 @@
 import { supabase } from "@/lib/supabase";
+import {
+  isLockedCheckoutState,
+  normalizeSalesStateValue,
+  sizeLabel,
+} from "@/lib/sales-analytics";
 import type {
   Conversation,
   CustomerIntent,
@@ -9,6 +14,16 @@ import type {
   SalesState,
   SalesReply,
 } from "@/lib/types";
+export {
+  calculateOrderValue,
+  isLockedCheckoutState,
+  nextCheckoutStateFromOrder,
+  normalizeSalesStateValue,
+  reconcileSalesState,
+  sizeLabel,
+  sizePrice,
+} from "@/lib/sales-analytics";
+export type { SalesStateReconciliation } from "@/lib/sales-analytics";
 
 export type ParsedSalesInput = {
   intent: CustomerIntent;
@@ -56,13 +71,6 @@ const EXACT_CONFIRM_MESSAGES = ["confirm", "book", "yes confirm", "confirm order
 const UPSELL_KEYWORDS = ["upgrade", "add", "yes add", "make it 2", "yes"];
 const EDIT_KEYWORDS = ["edit order", "edit", "change order", "modify", "change"];
 const DIRECT_SIZE_MESSAGES: ProductSize[] = ["medium", "large", "jumbo"];
-const LOCKED_CHECKOUT_STATES: SalesState[] = [
-  "awaiting_quantity",
-  "awaiting_name",
-  "awaiting_address",
-  "awaiting_date",
-  "awaiting_confirmation",
-];
 
 type QuantityMatch = {
   quantity: number;
@@ -200,9 +208,7 @@ function isExactSizeMessage(message: string): boolean {
   return DIRECT_SIZE_MESSAGES.includes(text as ProductSize);
 }
 
-function isQuantityMessage(message: string): boolean {
-  return parseQuantityValue(message) !== null;
-}
+// isQuantityMessage is handled by parseQuantityValue internally
 
 function parseQuantityValue(input: string): number | null {
   const normalized = normalizeText(input);
@@ -241,8 +247,21 @@ function isLikelyName(message: string): boolean {
   const trimmed = message.trim();
   const normalized = stripTrailingPunctuation(normalizeText(trimmed));
 
+  // Names don't have question marks
+  if (trimmed.includes("?")) return false;
+
   if (!normalized || normalized.length < 2) return false;
+  
+  // Names don't have digits
   if (/\d/.test(normalized)) return false;
+  
+  // Names are usually short but not single common words
+  const words = normalized.split(/\s+/);
+  if (words.length > 5) return false; // Too long for just a name
+
+  const smallTalk = ["yes", "no", "ok", "okay", "thanks", "thank", "sure", "now", "where", "how", "you", "there", "wait", "hello", "hi", "hey"];
+  if (words.length === 1 && smallTalk.includes(words[0])) return false;
+
   if (isGreetingMessage(normalized) || isPriceMessage(normalized) || isConfirmationMessage(normalized)) {
     return false;
   }
@@ -275,16 +294,6 @@ function splitCheckoutSegments(message: string): string[] {
     .split(/[\n,;|]+/)
     .map((segment) => segment.trim())
     .filter(Boolean);
-}
-
-function nextCheckoutStateFromOrder(order: Order | null): SalesState {
-  if (!order?.product_size) return "browsing";
-  if (!order.quantity) return "awaiting_quantity";
-  if (!order.customer_name) return "awaiting_name";
-  if (!order.delivery_address) return "awaiting_address";
-  if (!order.delivery_date) return "awaiting_date";
-  if (order.status === "confirmed") return "confirmed";
-  return "awaiting_confirmation";
 }
 
 function buildCheckoutReply(state: SalesState, order: Order | null): string | SalesReply {
@@ -321,32 +330,6 @@ function deriveLeadTagForState(args: {
 
 export function normalizeText(input: string): string {
   return input.trim().toLowerCase();
-}
-
-export function normalizeSalesStateValue(state: string | null | undefined): SalesState {
-  if (state === "recommended") return "browsing";
-  if (state === "awaiting_location") return "awaiting_address";
-  if (state === "awaiting_delivery_date") return "awaiting_date";
-
-  switch (state) {
-    case "new":
-    case "browsing":
-    case "awaiting_quantity":
-    case "awaiting_name":
-    case "awaiting_address":
-    case "awaiting_date":
-    case "awaiting_confirmation":
-    case "confirmed":
-    case "human_handoff":
-    case "lost":
-      return state;
-    default:
-      return "new";
-  }
-}
-
-export function isLockedCheckoutState(state: SalesState): boolean {
-  return LOCKED_CHECKOUT_STATES.includes(state);
 }
 
 export function detectIntent(message: string): CustomerIntent {
@@ -405,28 +388,6 @@ export function deriveLeadTag(intent: CustomerIntent, quantity: number | null): 
   if (intent === "ready_to_buy") return "hot";
   if (intent === "price") return "price_seeker";
   return "warm";
-}
-
-export function sizeLabel(size: ProductSize): string {
-  switch (size) {
-    case "medium":
-      return "Medium";
-    case "large":
-      return "Large";
-    case "jumbo":
-      return "Jumbo";
-  }
-}
-
-export function sizePrice(size: ProductSize): number {
-  switch (size) {
-    case "medium":
-      return 1499;
-    case "large":
-      return 1999;
-    case "jumbo":
-      return 2499;
-  }
 }
 
 export function getDeterministicTransition(args: {
@@ -778,6 +739,17 @@ export function buildSalesReply(
   return null;
 }
 
+export function getCheckoutFallback(state: SalesState): string {
+  switch (state) {
+    case "awaiting_quantity": return "How many boxes would you like? (e.g., '2 boxes')";
+    case "awaiting_name": return "I'll need your name to continue the order. What's your name?";
+    case "awaiting_address": return "Could you please share the delivery address?";
+    case "awaiting_date": return "When should we deliver these mangoes?";
+    case "awaiting_confirmation": return "Please confirm the order above so I can send it to the team.";
+    default: return "I'm sorry, I didn't catch that. Could you please provide the details for your order?";
+  }
+}
+
 export async function getDraftOrder(conversationId: string) {
   const { data, error } = await supabase
     .from("orders")
@@ -848,27 +820,48 @@ export async function updateConversationSalesFields(args: {
   leadTag: LeadTag;
   lastCustomerIntent: CustomerIntent;
   resetFollowUpCount: boolean;
+  expectedUpdatedAt?: string;
+  name?: string;
 }) {
-  const { conversationId, salesState, leadTag, lastCustomerIntent, resetFollowUpCount } = args;
+  const { 
+    conversationId, 
+    salesState, 
+    leadTag, 
+    lastCustomerIntent, 
+    resetFollowUpCount,
+    expectedUpdatedAt,
+    name
+  } = args;
 
-  const patch: any = {
+  const patch: Record<string, unknown> = {
     sales_state: salesState,
     lead_tag: leadTag,
     last_customer_intent: lastCustomerIntent,
     updated_at: new Date().toISOString(),
   };
 
+  if (name) patch.name = name;
   if (resetFollowUpCount) {
     patch.follow_up_count = 0;
   }
 
-  const { error } = await supabase
+  let query = supabase
     .from("conversations")
     .update(patch)
     .eq("id", conversationId);
 
+  if (expectedUpdatedAt) {
+    query = query.eq("updated_at", expectedUpdatedAt);
+  }
+
+  const { data, error } = await query.select();
+
   if (error) {
     console.error("[WH-ERROR] Conversation sales fields update failed", error);
     throw error;
+  }
+
+  if (expectedUpdatedAt && (!data || data.length === 0)) {
+    throw new Error("VERSION_CONFLICT");
   }
 }

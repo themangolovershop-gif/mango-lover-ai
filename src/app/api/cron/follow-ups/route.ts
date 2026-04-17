@@ -2,13 +2,13 @@ import { NextResponse } from "next/server";
 import {
   cancelFollowUpById,
   hasCustomerReplyAfterFollowUp,
-  incrementFollowUpCount,
   pickAutoFollowUpTemplate,
   scheduleAutoFollowUp,
   getLatestDraftOrder,
 } from "@/lib/followups";
 import { supabase } from "@/lib/supabase";
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
+import type { Conversation } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -132,7 +132,7 @@ async function processPendingFollowUps(request: Request) {
           .maybeSingle();
 
         if (claimError || !claimed) {
-          log.warn("Follow-up atomicity claim missed, already processed", { followUpId: item.id });
+          log.warn("Follow-up already claimed or processed", { followUpId: item.id });
           results.push({ id: item.id, status: "already_claimed_or_processed" });
           continue;
         }
@@ -150,7 +150,6 @@ async function processPendingFollowUps(request: Request) {
         }
 
         const outboundId = sendResult?.messages?.[0]?.id || null;
-
         const postSendErrors: string[] = [];
 
         const { error: messageInsertError } = await supabase.from("messages").insert({
@@ -161,7 +160,7 @@ async function processPendingFollowUps(request: Request) {
         });
 
         if (messageInsertError) {
-          log.error("Assistant message store failed after follow-up send", {
+          log.error("Assistant follow-up message store failed after send", {
             followUpId: item.id,
             error: messageInsertError.message,
           });
@@ -169,16 +168,17 @@ async function processPendingFollowUps(request: Request) {
         }
 
         try {
-          await incrementFollowUpCount(item.conversation_id);
-
-          // Phase 2: Schedule next recovery nudge
-          const { data: updatedConvo } = await supabase
-            .from("conversations")
-            .select("*")
-            .eq("id", item.conversation_id)
+          // Use atomic RPC for state progression
+          const { data, error: incErr } = await supabase
+            .rpc("increment_follow_up_count", { conv_id: item.conversation_id })
             .single();
 
-          if (updatedConvo) {
+          const updatedConvo = data as Conversation | null;
+
+          if (incErr) {
+            log.error("Failed to increment follow-up count", incErr);
+            postSendErrors.push(`inc_failed: ${incErr.message}`);
+          } else if (updatedConvo) {
             const draftOrder = await getLatestDraftOrder(item.conversation_id);
             const nextFollowUp = pickAutoFollowUpTemplate({
               conversation: updatedConvo,
@@ -193,24 +193,12 @@ async function processPendingFollowUps(request: Request) {
                 delayHours: nextFollowUp.delayHours,
                 reason: nextFollowUp.reason,
               });
-              log.info("Next follow-up stage scheduled automatically", {
-                conversationId: item.conversation_id,
-                reason: nextFollowUp.reason,
-                count: updatedConvo.follow_up_count,
-              });
             }
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          postSendErrors.push(`follow_up_count_scheduling_failed: ${message}`);
+          log.error("Recovery scheduling failed", error);
+          postSendErrors.push(`schedule_failed: ${error instanceof Error ? error.message : String(error)}`);
         }
-
-        log.info("Follow-up sent", {
-          followUpId: item.id,
-          conversationId: item.conversation_id,
-          outboundMsgId: outboundId,
-          hadPostSendErrors: postSendErrors.length > 0,
-        });
 
         results.push({
           id: item.id,

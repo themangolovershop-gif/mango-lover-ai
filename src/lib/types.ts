@@ -107,3 +107,24 @@ export interface FollowUp {
   created_at: string;
   updated_at: string;
 }
+
+export interface WebhookLog {
+  id: string;
+  whatsapp_msg_id: string | null;
+  phone: string | null;
+  status: string;
+  payload: Record<string, unknown> | null;
+  error: string | null;
+  duration_ms: number | null;
+  created_at: string;
+}
+
+export type FilterKey =
+  | "all"
+  | "hot"
+  | "draft_orders"
+  | "abandoned"
+  | "confirmed"
+  | "human_handoff"
+  | "corporate"
+  | "logs";
