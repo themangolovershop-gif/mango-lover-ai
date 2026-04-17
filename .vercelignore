@@ -1,0 +1,8 @@
+.next
+.env*
+!.env.example
+scratch
+deploy-vercel-fallback.ps1
+claude_code_prompt.md
+CLAUDE.md
+AGENTS.md
