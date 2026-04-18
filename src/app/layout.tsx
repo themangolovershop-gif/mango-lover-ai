@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Script from "next/script";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 interface AssistLoopWidget {
@@ -26,6 +27,7 @@ export default function RootLayout({
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
         {children}
+        <Analytics />
         <Script
           src="https://assistloop.ai/assistloop-widget.js"
           strategy="afterInteractive"
