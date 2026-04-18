@@ -1,93 +1,254 @@
--- Run this in Supabase SQL Editor to set up the database
+-- The Mango Lover Shop
+-- Live Next.js + Supabase schema for the WhatsApp webhook, dashboard, follow-ups, and logs.
+--
+-- This script is designed to be rerun safely in Supabase SQL Editor.
+-- It covers the production path currently used by:
+--   - src/app/api/webhook/route.ts
+--   - src/app/api/cron/follow-ups/route.ts
+--   - src/app/dashboard/page.tsx
+--
+-- Important:
+--   - This script does NOT provision the separate Prisma backend schema under prisma/schema.prisma.
+--   - Run this in the Supabase SQL Editor connected to the production project.
 
-create table conversations (
-  id uuid default gen_random_uuid() primary key,
-  phone text unique not null,
+create extension if not exists pgcrypto;
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create table if not exists public.conversations (
+  id uuid primary key default gen_random_uuid(),
+  phone text not null,
   name text,
-  mode text not null default 'agent' check (mode in ('agent', 'human')),
+  mode text not null default 'agent',
   sales_state text not null default 'new',
   lead_tag text,
   last_customer_intent text,
   follow_up_count integer not null default 0,
   last_follow_up_sent_at timestamp with time zone,
-  updated_at timestamp with time zone default now(),
-  created_at timestamp with time zone default now()
+  created_at timestamp with time zone not null default now(),
+  updated_at timestamp with time zone not null default now()
 );
 
-create table messages (
-  id uuid default gen_random_uuid() primary key,
-  conversation_id uuid references conversations(id) on delete cascade not null,
-  role text not null check (role in ('user', 'assistant')),
+create table if not exists public.messages (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null,
+  role text not null,
   content text not null,
-  whatsapp_msg_id text unique,
-  created_at timestamp with time zone default now()
+  whatsapp_msg_id text,
+  created_at timestamp with time zone not null default now()
 );
 
-create table orders (
-  id uuid default gen_random_uuid() primary key,
-  conversation_id uuid references conversations(id) on delete cascade not null,
+create table if not exists public.orders (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null,
   customer_name text,
   phone text not null,
-  product_size text check (product_size in ('medium', 'large', 'jumbo')),
+  product_size text,
   quantity integer,
   delivery_address text,
   delivery_date text,
-  order_type text not null default 'personal' check (order_type in ('personal', 'gift', 'corporate', 'subscription')),
-  status text not null default 'draft' check (status in ('draft', 'awaiting_confirmation', 'confirmed', 'cancelled')),
+  order_type text not null default 'personal',
+  status text not null default 'draft',
   notes text,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now()
+  created_at timestamp with time zone not null default now(),
+  updated_at timestamp with time zone not null default now()
 );
 
-create table follow_ups (
-  id uuid default gen_random_uuid() primary key,
-  conversation_id uuid references conversations(id) on delete cascade not null,
+create table if not exists public.follow_ups (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null,
   phone text not null,
   message text not null,
-  status text not null default 'pending' check (status in ('pending', 'sent', 'cancelled')),
+  status text not null default 'pending',
   scheduled_for timestamp with time zone not null,
   sent_at timestamp with time zone,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now()
+  created_at timestamp with time zone not null default now(),
+  updated_at timestamp with time zone not null default now()
 );
 
-create table webhook_logs (
-  id uuid default gen_random_uuid() primary key,
+create table if not exists public.webhook_logs (
+  id uuid primary key default gen_random_uuid(),
   whatsapp_msg_id text,
   phone text,
   status text not null,
   payload jsonb,
   error text,
   duration_ms integer,
-  created_at timestamp with time zone default now()
+  created_at timestamp with time zone not null default now()
 );
 
-create index idx_messages_conversation on messages(conversation_id);
-create index idx_messages_conversation_role_created on messages(conversation_id, role, created_at desc);
-create index idx_conversations_updated on conversations(updated_at desc);
-create index idx_orders_conversation on orders(conversation_id);
-create index idx_follow_ups_conversation on follow_ups(conversation_id);
-create index idx_follow_ups_status_scheduled on follow_ups(status, scheduled_for);
-create index idx_follow_ups_pending_conversation on follow_ups(conversation_id, scheduled_for) where status = 'pending';
+alter table public.conversations
+  add column if not exists phone text,
+  add column if not exists name text,
+  add column if not exists mode text,
+  add column if not exists sales_state text,
+  add column if not exists lead_tag text,
+  add column if not exists last_customer_intent text,
+  add column if not exists follow_up_count integer,
+  add column if not exists last_follow_up_sent_at timestamp with time zone,
+  add column if not exists created_at timestamp with time zone,
+  add column if not exists updated_at timestamp with time zone;
 
-alter table conversations add column if not exists follow_up_count integer not null default 0;
-alter table conversations add column if not exists last_follow_up_sent_at timestamp with time zone;
+alter table public.messages
+  add column if not exists conversation_id uuid,
+  add column if not exists role text,
+  add column if not exists content text,
+  add column if not exists whatsapp_msg_id text,
+  add column if not exists created_at timestamp with time zone;
 
-update conversations
+alter table public.orders
+  add column if not exists conversation_id uuid,
+  add column if not exists customer_name text,
+  add column if not exists phone text,
+  add column if not exists product_size text,
+  add column if not exists quantity integer,
+  add column if not exists delivery_address text,
+  add column if not exists delivery_date text,
+  add column if not exists order_type text,
+  add column if not exists status text,
+  add column if not exists notes text,
+  add column if not exists created_at timestamp with time zone,
+  add column if not exists updated_at timestamp with time zone;
+
+alter table public.follow_ups
+  add column if not exists conversation_id uuid,
+  add column if not exists phone text,
+  add column if not exists message text,
+  add column if not exists status text,
+  add column if not exists scheduled_for timestamp with time zone,
+  add column if not exists sent_at timestamp with time zone,
+  add column if not exists created_at timestamp with time zone,
+  add column if not exists updated_at timestamp with time zone;
+
+alter table public.webhook_logs
+  add column if not exists whatsapp_msg_id text,
+  add column if not exists phone text,
+  add column if not exists status text,
+  add column if not exists payload jsonb,
+  add column if not exists error text,
+  add column if not exists duration_ms integer,
+  add column if not exists created_at timestamp with time zone;
+
+update public.conversations
+set
+  mode = coalesce(mode, 'agent'),
+  sales_state = coalesce(sales_state, 'new'),
+  follow_up_count = coalesce(follow_up_count, 0),
+  created_at = coalesce(created_at, now()),
+  updated_at = coalesce(updated_at, now())
+where
+  mode is null
+  or sales_state is null
+  or follow_up_count is null
+  or created_at is null
+  or updated_at is null;
+
+update public.messages
+set
+  created_at = coalesce(created_at, now())
+where created_at is null;
+
+update public.orders
+set
+  order_type = coalesce(order_type, 'personal'),
+  status = coalesce(status, 'draft'),
+  created_at = coalesce(created_at, now()),
+  updated_at = coalesce(updated_at, now())
+where
+  order_type is null
+  or status is null
+  or created_at is null
+  or updated_at is null;
+
+update public.follow_ups
+set
+  status = coalesce(status, 'pending'),
+  created_at = coalesce(created_at, now()),
+  updated_at = coalesce(updated_at, now())
+where
+  status is null
+  or created_at is null
+  or updated_at is null;
+
+update public.webhook_logs
+set
+  created_at = coalesce(created_at, now())
+where created_at is null;
+
+update public.conversations
 set sales_state = 'browsing'
 where sales_state = 'recommended';
 
-update conversations
+update public.conversations
 set sales_state = 'awaiting_address'
 where sales_state = 'awaiting_location';
 
-update conversations
+update public.conversations
 set sales_state = 'awaiting_date'
 where sales_state = 'awaiting_delivery_date';
 
-alter table conversations drop constraint if exists conversations_sales_state_check;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'messages_conversation_id_fkey'
+  ) then
+    alter table public.messages
+      add constraint messages_conversation_id_fkey
+      foreign key (conversation_id)
+      references public.conversations(id)
+      on delete cascade;
+  end if;
+end $$;
 
-alter table conversations
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'orders_conversation_id_fkey'
+  ) then
+    alter table public.orders
+      add constraint orders_conversation_id_fkey
+      foreign key (conversation_id)
+      references public.conversations(id)
+      on delete cascade;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'follow_ups_conversation_id_fkey'
+  ) then
+    alter table public.follow_ups
+      add constraint follow_ups_conversation_id_fkey
+      foreign key (conversation_id)
+      references public.conversations(id)
+      on delete cascade;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'conversations_mode_check'
+  ) then
+    alter table public.conversations
+      add constraint conversations_mode_check
+      check (mode in ('agent', 'human'));
+  end if;
+end $$;
+
+alter table public.conversations
+  drop constraint if exists conversations_sales_state_check;
+
+alter table public.conversations
   add constraint conversations_sales_state_check
   check (
     sales_state in (
@@ -107,11 +268,9 @@ alter table conversations
 do $$
 begin
   if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'conversations_lead_tag_check'
+    select 1 from pg_constraint where conname = 'conversations_lead_tag_check'
   ) then
-    alter table conversations
+    alter table public.conversations
       add constraint conversations_lead_tag_check
       check (
         lead_tag is null
@@ -133,11 +292,9 @@ end $$;
 do $$
 begin
   if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'conversations_last_customer_intent_check'
+    select 1 from pg_constraint where conname = 'conversations_last_customer_intent_check'
   ) then
-    alter table conversations
+    alter table public.conversations
       add constraint conversations_last_customer_intent_check
       check (
         last_customer_intent is null
@@ -160,33 +317,229 @@ end $$;
 do $$
 begin
   if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'orders_quantity_positive_check'
+    select 1 from pg_constraint where conname = 'messages_role_check'
   ) then
-    alter table orders
+    alter table public.messages
+      add constraint messages_role_check
+      check (role in ('user', 'assistant'));
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'orders_product_size_check'
+  ) then
+    alter table public.orders
+      add constraint orders_product_size_check
+      check (product_size is null or product_size in ('medium', 'large', 'jumbo'));
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'orders_order_type_check'
+  ) then
+    alter table public.orders
+      add constraint orders_order_type_check
+      check (order_type in ('personal', 'gift', 'corporate', 'subscription'));
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'orders_status_check'
+  ) then
+    alter table public.orders
+      add constraint orders_status_check
+      check (status in ('draft', 'awaiting_confirmation', 'confirmed', 'cancelled'));
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'orders_quantity_positive_check'
+  ) then
+    alter table public.orders
       add constraint orders_quantity_positive_check
       check (quantity is null or quantity > 0);
   end if;
 end $$;
 
--- Enable Realtime for the dashboard
-alter publication supabase_realtime add table messages;
-alter publication supabase_realtime add table conversations;
-alter publication supabase_realtime add table orders;
-alter publication supabase_realtime add table follow_ups;
-alter publication supabase_realtime add table webhook_logs;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'follow_ups_status_check'
+  ) then
+    alter table public.follow_ups
+      add constraint follow_ups_status_check
+      check (status in ('pending', 'sent', 'cancelled'));
+  end if;
+end $$;
 
--- Atomically increment follow-up count and return the updated conversation
-create or replace function increment_follow_up_count(conv_id uuid)
-returns setof conversations
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'public'
+      and indexname = 'idx_conversations_phone_unique'
+  ) then
+    if exists (
+      select phone
+      from public.conversations
+      group by phone
+      having count(*) > 1
+    ) then
+      raise notice 'Skipped unique index idx_conversations_phone_unique because duplicate phone values already exist.';
+    else
+      create unique index idx_conversations_phone_unique
+        on public.conversations(phone);
+    end if;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'public'
+      and indexname = 'idx_messages_whatsapp_msg_id_unique'
+  ) then
+    if exists (
+      select whatsapp_msg_id
+      from public.messages
+      where whatsapp_msg_id is not null
+      group by whatsapp_msg_id
+      having count(*) > 1
+    ) then
+      raise notice 'Skipped unique index idx_messages_whatsapp_msg_id_unique because duplicate WhatsApp message ids already exist.';
+    else
+      create unique index idx_messages_whatsapp_msg_id_unique
+        on public.messages(whatsapp_msg_id)
+        where whatsapp_msg_id is not null;
+    end if;
+  end if;
+end $$;
+
+create index if not exists idx_messages_conversation
+  on public.messages(conversation_id);
+
+create index if not exists idx_messages_conversation_role_created
+  on public.messages(conversation_id, role, created_at desc);
+
+create index if not exists idx_conversations_updated
+  on public.conversations(updated_at desc);
+
+create index if not exists idx_orders_conversation
+  on public.orders(conversation_id);
+
+create index if not exists idx_orders_conversation_status_updated
+  on public.orders(conversation_id, status, updated_at desc);
+
+create index if not exists idx_follow_ups_conversation
+  on public.follow_ups(conversation_id);
+
+create index if not exists idx_follow_ups_status_scheduled
+  on public.follow_ups(status, scheduled_for);
+
+create index if not exists idx_follow_ups_pending_conversation
+  on public.follow_ups(conversation_id, scheduled_for)
+  where status = 'pending';
+
+create index if not exists idx_webhook_logs_phone_created
+  on public.webhook_logs(phone, created_at desc);
+
+drop trigger if exists conversations_set_updated_at on public.conversations;
+create trigger conversations_set_updated_at
+before update on public.conversations
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists orders_set_updated_at on public.orders;
+create trigger orders_set_updated_at
+before update on public.orders
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists follow_ups_set_updated_at on public.follow_ups;
+create trigger follow_ups_set_updated_at
+before update on public.follow_ups
+for each row
+execute function public.set_updated_at();
+
+do $$
+begin
+  if exists (
+    select 1 from pg_publication where pubname = 'supabase_realtime'
+  ) then
+    if not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'messages'
+    ) then
+      alter publication supabase_realtime add table public.messages;
+    end if;
+
+    if not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'conversations'
+    ) then
+      alter publication supabase_realtime add table public.conversations;
+    end if;
+
+    if not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'orders'
+    ) then
+      alter publication supabase_realtime add table public.orders;
+    end if;
+
+    if not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'follow_ups'
+    ) then
+      alter publication supabase_realtime add table public.follow_ups;
+    end if;
+
+    if not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'webhook_logs'
+    ) then
+      alter publication supabase_realtime add table public.webhook_logs;
+    end if;
+  else
+    raise notice 'Publication supabase_realtime was not found. Skipping realtime publication setup.';
+  end if;
+end $$;
+
+create or replace function public.increment_follow_up_count(conv_id uuid)
+returns setof public.conversations
 language plpgsql
 as $$
 begin
   return query
-  update conversations
-  set 
-    follow_up_count = follow_up_count + 1,
+  update public.conversations
+  set
+    follow_up_count = coalesce(follow_up_count, 0) + 1,
     last_follow_up_sent_at = now(),
     updated_at = now()
   where id = conv_id
@@ -194,9 +547,7 @@ begin
 end;
 $$;
 
--- Atomic helper for webhook locking (session level)
--- Note: Use with caution in serverless.
-create or replace function acquire_lock(lock_id bigint)
+create or replace function public.acquire_lock(lock_id bigint)
 returns boolean
 language plpgsql
 as $$
@@ -205,7 +556,7 @@ begin
 end;
 $$;
 
-create or replace function release_lock(lock_id bigint)
+create or replace function public.release_lock(lock_id bigint)
 returns boolean
 language plpgsql
 as $$

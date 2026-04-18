@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Conversation, FollowUp, Message, Order } from "@/lib/types";
+import type { Conversation, FollowUp, Message, Order, WebhookLog } from "@/lib/types";
 
 type InMemoryDb = {
   conversations: Conversation[];
@@ -17,9 +17,10 @@ type InMemoryDb = {
   aiCalls: number;
   idCounter: number;
   failNextConversationOptimisticUpdate: boolean;
+  webhook_logs: WebhookLog[];
 };
 
-type TableName = "conversations" | "messages" | "orders" | "follow_ups";
+type TableName = "conversations" | "messages" | "orders" | "follow_ups" | "webhook_logs";
 
 type SelectMode = "many" | "single" | "maybeSingle";
 
@@ -33,6 +34,7 @@ function createDb(): InMemoryDb {
     aiCalls: 0,
     idCounter: 1,
     failNextConversationOptimisticUpdate: false,
+    webhook_logs: [],
   };
 }
 
@@ -160,6 +162,19 @@ function createFollowUp(db: InMemoryDb, payload: Record<string, unknown>) {
   } satisfies FollowUp;
 }
 
+function createWebhookLog(db: InMemoryDb, payload: Record<string, unknown>) {
+  return {
+    id: String(payload.id ?? nextId(db, "log")),
+    whatsapp_msg_id: payload.whatsapp_msg_id != null ? String(payload.whatsapp_msg_id) : null,
+    phone: payload.phone != null ? String(payload.phone) : null,
+    status: String(payload.status),
+    payload: (payload.payload as Record<string, unknown>) ?? null,
+    error: payload.error != null ? String(payload.error) : null,
+    duration_ms: typeof payload.duration_ms === "number" ? payload.duration_ms : null,
+    created_at: String(payload.created_at ?? nowIso()),
+  } satisfies WebhookLog;
+}
+
 class QueryBuilder {
   private filters: Array<(row: Record<string, unknown>) => boolean> = [];
   private equalityFilters = new Map<string, unknown>();
@@ -252,6 +267,8 @@ class QueryBuilder {
         return this.db.orders as unknown as Record<string, unknown>[];
       case "follow_ups":
         return this.db.followUps as unknown as Record<string, unknown>[];
+      case "webhook_logs":
+        return this.db.webhook_logs as unknown as Record<string, unknown>[];
     }
   }
 
@@ -335,7 +352,9 @@ class QueryBuilder {
             ? createMessage(this.db, payload)
             : this.table === "orders"
               ? createOrder(this.db, payload)
-              : createFollowUp(this.db, payload);
+              : this.table === "webhook_logs"
+                ? createWebhookLog(this.db, payload)
+                : createFollowUp(this.db, payload);
 
       rows.push(created as unknown as Record<string, unknown>);
       inserted.push(created as unknown as Record<string, unknown>);
@@ -498,6 +517,7 @@ describe("Live Flow Simulation", () => {
       { messageId: "msg-6", text: "Walkeshwar Mumbai", expectState: "awaiting_date", replyIncludes: "When would you like delivery" },
       { messageId: "msg-7", text: "Tomorrow", expectState: "awaiting_confirmation", replyIncludes: "Order Summary" },
       { messageId: "msg-8", buttonTitle: "CONFIRM", expectState: "confirmed", replyIncludes: "order is confirmed" },
+      { messageId: "msg-9", text: "Hello", expectState: "confirmed", replyIncludes: "another booking" },
     ] as const;
 
     for (const step of steps) {
@@ -536,7 +556,7 @@ describe("Live Flow Simulation", () => {
       status: "confirmed",
     });
 
-    expect(db.messages.filter((message) => message.role === "assistant")).toHaveLength(8);
+    expect(db.messages.filter((message) => message.role === "assistant")).toHaveLength(9);
     expect(
       db.messages
         .filter((message) => message.role === "assistant")
@@ -566,6 +586,55 @@ describe("Live Flow Simulation", () => {
       .at(-1);
 
     expect(lastAssistantMessage?.content).toContain("May I have your name");
+    expect(db.aiCalls).toBe(0);
+  });
+
+  it("answers trust questions during checkout without repeating the raw quantity prompt alone", async () => {
+    const route = await importWebhookRoute(db);
+
+    await postWebhook(route, buildWebhookPayload({ messageId: "msg-quality-1", text: "Large" }));
+    expect(db.conversations[0]?.sales_state).toBe("awaiting_quantity");
+
+    const response = await postWebhook(
+      route,
+      buildWebhookPayload({ messageId: "msg-quality-2", text: "Are the mangoes sweet?" })
+    );
+
+    expect(response.status).toBe(200);
+    expect(db.conversations[0]?.sales_state).toBe("awaiting_quantity");
+
+    const lastAssistantMessage = [...db.messages]
+      .filter((message) => message.role === "assistant")
+      .at(-1);
+
+    expect(lastAssistantMessage?.content).toContain("GI-tagged Devgad Alphonso");
+    expect(lastAssistantMessage?.content).toContain("How many boxes would you like?");
+    expect(db.aiCalls).toBe(0);
+  });
+
+  it("moves confirmed order edit requests to human handoff instead of repeating confirmation", async () => {
+    db.conversations.push(
+      createConversation(db, {
+        phone: "919000000000",
+        sales_state: "confirmed",
+      })
+    );
+
+    const route = await importWebhookRoute(db);
+    const response = await postWebhook(
+      route,
+      buildWebhookPayload({ messageId: "msg-edit-confirmed", text: "Change" })
+    );
+
+    expect(response.status).toBe(200);
+    expect(db.conversations[0]?.sales_state).toBe("human_handoff");
+
+    const lastAssistantMessage = [...db.messages]
+      .filter((message) => message.role === "assistant")
+      .at(-1);
+
+    expect(lastAssistantMessage?.content).toContain("moving this chat");
+    expect(lastAssistantMessage?.content).not.toContain("order is confirmed");
     expect(db.aiCalls).toBe(0);
   });
 

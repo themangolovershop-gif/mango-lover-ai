@@ -1,20 +1,5 @@
 import { supabase } from "@/lib/supabase";
 import {
-  isLockedCheckoutState,
-  normalizeSalesStateValue,
-  sizeLabel,
-} from "@/lib/sales-analytics";
-import type {
-  Conversation,
-  CustomerIntent,
-  LeadTag,
-  Order,
-  OrderType,
-  ProductSize,
-  SalesState,
-  SalesReply,
-} from "@/lib/types";
-export {
   calculateOrderValue,
   isLockedCheckoutState,
   nextCheckoutStateFromOrder,
@@ -23,6 +8,32 @@ export {
   sizeLabel,
   sizePrice,
 } from "@/lib/sales-analytics";
+import {
+  analyzeCustomerMessage,
+  normalizeInboundText,
+} from "@/lib/sales-intelligence";
+import { buildCatalogPricingLines, DEFAULT_SALES_SETTINGS } from "@/lib/sales-settings";
+import type { CustomerMessageAnalysis } from "@/lib/sales-platform-contracts";
+import type {
+  Conversation,
+  CustomerIntent,
+  LeadTag,
+  Order,
+  OrderType,
+  ProductSize,
+  SalesReply,
+  SalesState,
+} from "@/lib/types";
+
+export {
+  calculateOrderValue,
+  isLockedCheckoutState,
+  nextCheckoutStateFromOrder,
+  normalizeSalesStateValue,
+  reconcileSalesState,
+  sizeLabel,
+  sizePrice,
+};
 export type { SalesStateReconciliation } from "@/lib/sales-analytics";
 
 export type ParsedSalesInput = {
@@ -34,6 +45,7 @@ export type ParsedSalesInput = {
   isEdit: boolean;
   wantsHuman: boolean;
   isGreeting: boolean;
+  analysis: CustomerMessageAnalysis;
 };
 
 type OrderPatch = Partial<
@@ -58,20 +70,6 @@ export type DeterministicTransition = {
   lastCustomerIntent: CustomerIntent;
 };
 
-const GREETING_KEYWORDS = ["hi", "hello", "hey", "hii"];
-const PRICE_KEYWORDS = ["price", "rate", "cost", "kitna", "pricing", "bhav", "paise", "rate card", "price list"];
-const DELIVERY_KEYWORDS = ["delivery", "ship", "shipping", "mumbai", "thane", "india", "pincode"];
-const GIFT_KEYWORDS = ["gift", "gifting", "hamper"];
-const CORPORATE_KEYWORDS = ["corporate", "bulk", "event", "office", "client", "business order"];
-const SUBSCRIPTION_KEYWORDS = ["subscription", "weekly", "seasonal", "repeat"];
-const HUMAN_KEYWORDS = ["human", "person", "call me", "team", "support", "talk to someone", "executive"];
-const TRUST_KEYWORDS = ["original", "real", "authentic", "devgad", "gi", "quality", "organic"];
-const STORE_KEYWORDS = ["store", "shop", "visit", "location", "address"];
-const EXACT_CONFIRM_MESSAGES = ["confirm", "book", "yes confirm", "confirm order", "book order"];
-const UPSELL_KEYWORDS = ["upgrade", "add", "yes add", "make it 2", "yes"];
-const EDIT_KEYWORDS = ["edit order", "edit", "change order", "modify", "change"];
-const DIRECT_SIZE_MESSAGES: ProductSize[] = ["medium", "large", "jumbo"];
-
 type QuantityMatch = {
   quantity: number;
   token: string;
@@ -83,27 +81,42 @@ type CombinedSelection = {
   customerName: string | null;
 };
 
+const GREETING_KEYWORDS = ["hi", "hello", "hey", "hii"];
+const PRICE_KEYWORDS = [
+  "price",
+  "rate",
+  "cost",
+  "kitna",
+  "pricing",
+  "bhav",
+  "price list",
+];
+const EXACT_CONFIRM_MESSAGES = ["confirm", "book", "yes confirm", "confirm order", "book order"];
+const UPSELL_KEYWORDS = ["upgrade", "add", "yes add", "make it 2", "yes"];
+const EDIT_KEYWORDS = ["edit order", "edit", "change order", "modify", "change"];
+const DIRECT_SIZE_MESSAGES: ProductSize[] = ["medium", "large", "jumbo"];
+
 function buildWelcomeReply(): string {
-  return "🥭 Welcome to The Mango Lover Shop!\n\nWould you like to see prices or place an order?";
+  return [
+    `Welcome to ${DEFAULT_SALES_SETTINGS.brand.businessName}.`,
+    "",
+    "I can help with pricing, a recommendation, or a booking. Would you like to see prices or hear the best box for your requirement?",
+  ].join("\n");
 }
 
 function buildPricingReply(): string {
   return [
-    "🥭 Our premium Devgad Alphonso:",
+    ...buildCatalogPricingLines(),
     "",
-    "Medium - ₹1499",
-    "Large - ₹1999",
-    "Jumbo - ₹2499",
-    "",
-    "Which one would you like?",
+    "Large is the most balanced pick for most home orders. Which size would you like to reserve?",
   ].join("\n");
 }
 
 function buildConfirmedReply(): string {
   return [
-    "🥭 Your order is confirmed!",
+    "Your order is confirmed.",
     "",
-    "We’ll prepare your premium mangoes and share updates shortly.",
+    "We will prepare the batch and share the next update shortly.",
   ].join("\n");
 }
 
@@ -116,7 +129,7 @@ function buildOrderSummary(order: {
   notes?: string | null;
 }): SalesReply {
   const summary = [
-    "🥭 Order Summary:",
+    "Order Summary",
     "",
     `Name: ${order.customer_name || "-"}`,
     `Product: ${order.product_size ? sizeLabel(order.product_size) : "-"}`,
@@ -129,25 +142,27 @@ function buildOrderSummary(order: {
   const hasUpsell = order.notes?.includes("Upsell Accepted");
 
   if (order.quantity === 1 && !hasUpsell) {
-    summary.push(`🎁 *Special Offer:* Add a 2nd box of ${order.product_size ? sizeLabel(order.product_size) : "premium"} mangoes at a ₹200 discount!`);
-    
+    summary.push(
+      `If you'd like, I can add one more ${order.product_size ? sizeLabel(order.product_size) : "premium"} box at Rs 200 off before confirmation.`
+    );
+
     return {
       text: summary.join("\n"),
       buttons: [
         { id: "confirm", title: "CONFIRM" },
         { id: "upgrade", title: "UPGRADE (+1 Box)" },
-        { id: "edit", title: "EDIT ORDER" }
-      ]
-    };
-  } else {
-    return {
-      text: summary.join("\n"),
-      buttons: [
-        { id: "confirm", title: "CONFIRM" },
-        { id: "edit", title: "EDIT ORDER" }
-      ]
+        { id: "edit", title: "EDIT ORDER" },
+      ],
     };
   }
+
+  return {
+    text: summary.join("\n"),
+    buttons: [
+      { id: "confirm", title: "CONFIRM" },
+      { id: "edit", title: "EDIT ORDER" },
+    ],
+  };
 }
 
 function buildSummarySource(order: Order | null) {
@@ -166,6 +181,226 @@ function buildOrderType(intent: CustomerIntent, existingOrder: Order | null): Or
   if (intent === "corporate") return "corporate";
   if (intent === "subscription") return "subscription";
   return existingOrder?.order_type || "personal";
+}
+
+function buildEscalationReply(parsed: ParsedSalesInput): string {
+  if (
+    parsed.analysis.intents.includes("complaint") ||
+    parsed.analysis.intents.includes("refund")
+  ) {
+    return [
+      "I am sorry this was not right.",
+      "",
+      "I am moving this to our team now so it can be handled properly.",
+    ].join("\n");
+  }
+
+  if (
+    parsed.analysis.intents.includes("corporate_order") ||
+    parsed.analysis.intents.includes("bulk_order")
+  ) {
+    return [
+      "This looks like a larger requirement.",
+      "",
+      "I am moving it to our team so pricing, batching, and delivery can be handled correctly.",
+    ].join("\n");
+  }
+
+  return [
+    "Understood.",
+    "",
+    "I am moving this chat to a human team member now. Please wait a moment.",
+  ].join("\n");
+}
+
+function buildRecommendationReply(parsed: ParsedSalesInput): string {
+  if (parsed.analysis.entities.giftingIntent) {
+    return [
+      "For gifting, Jumbo is the best fit.",
+      "",
+      "It gives the strongest presentation and is the premium choice for special orders. If you'd like, I can start the booking now.",
+    ].join("\n");
+  }
+
+  return [
+    "For most home orders, Large is the best fit.",
+    "",
+    "It balances presentation, taste, and value very well. Tell me the quantity you want, and I will prepare the draft.",
+  ].join("\n");
+}
+
+function buildPaymentUpdateReply(): string {
+  return [
+    "Payment noted.",
+    "",
+    DEFAULT_SALES_SETTINGS.payment.verificationPrompt,
+  ].join("\n");
+}
+
+function buildAvailabilityReply(parsed: ParsedSalesInput): string {
+  const city = parsed.analysis.entities.city;
+  const cityLine = city
+    ? `We can check the current batch for ${city}.`
+    : "We can check the current batch for your delivery city.";
+
+  return [
+    cityLine,
+    "",
+    "Tell me the size and quantity you want, and I will guide you on the next step.",
+  ].join("\n");
+}
+
+function buildPriceObjectionReply(): string {
+  return [
+    "I understand.",
+    "",
+    "Our batches are GI-tagged Devgad Alphonso, naturally ripened, and curated for consistency. If you'd like, I can suggest the most balanced box for your requirement.",
+  ].join("\n");
+}
+
+function buildQualityTrustReply(): string {
+  return [
+    "Every batch is GI-tagged Devgad Alphonso, naturally ripened, and curated before dispatch.",
+    "",
+    "If you'd like, I can guide you to the right box now.",
+  ].join("\n");
+}
+
+function buildCorporateReply(): string {
+  return [
+    "We handle premium gifting and larger orders as well.",
+    "",
+    "Share the quantity and delivery city, and I will guide you on the right next step.",
+  ].join("\n");
+}
+
+function buildRepeatOrderReply(): string {
+  return [
+    "Welcome back.",
+    "",
+    "Tell me the size and quantity you would like this time, and I will prepare the draft quickly.",
+  ].join("\n");
+}
+
+function appendNextStep(reply: string, nextStep: string): string {
+  return [reply, "", nextStep].join("\n");
+}
+
+function buildLockedCheckoutAssistReply(args: {
+  state: SalesState;
+  parsed: ParsedSalesInput;
+  order: Order | null;
+  rawMessage: string;
+}): string | null {
+  const { state, parsed, order, rawMessage } = args;
+  const nextStep = getCheckoutFallback(state);
+
+  if (parsed.analysis.intents.includes("pricing") || isPriceMessage(rawMessage)) {
+    if (order?.product_size) {
+      return appendNextStep(
+        `${sizeLabel(order.product_size)} is Rs ${sizePrice(order.product_size)} per box.`,
+        nextStep
+      );
+    }
+
+    return appendNextStep(buildPricingReply(), nextStep);
+  }
+
+  if (parsed.analysis.intents.includes("recommendation_request")) {
+    return appendNextStep(buildRecommendationReply(parsed), nextStep);
+  }
+
+  if (
+    parsed.analysis.intents.includes("delivery_check") ||
+    parsed.analysis.intents.includes("availability_check")
+  ) {
+    return appendNextStep(buildAvailabilityReply(parsed), nextStep);
+  }
+
+  if (
+    parsed.analysis.intents.includes("quality_check") ||
+    parsed.analysis.intents.includes("authenticity_check")
+  ) {
+    return appendNextStep(buildQualityTrustReply(), nextStep);
+  }
+
+  if (parsed.analysis.intents.includes("gifting")) {
+    return appendNextStep(buildRecommendationReply(parsed), nextStep);
+  }
+
+  if (
+    parsed.analysis.intents.includes("corporate_order") ||
+    parsed.analysis.intents.includes("bulk_order")
+  ) {
+    return appendNextStep(buildCorporateReply(), nextStep);
+  }
+
+  if (parsed.analysis.intents.includes("repeat_order")) {
+    return appendNextStep(buildRepeatOrderReply(), nextStep);
+  }
+
+  if (
+    parsed.analysis.intents.includes("discount_request") ||
+    parsed.analysis.intents.includes("objection_price")
+  ) {
+    return appendNextStep(buildPriceObjectionReply(), nextStep);
+  }
+
+  return null;
+}
+
+function buildConfirmedStateReply(parsed: ParsedSalesInput, rawMessage: string): string {
+  if (parsed.isConfirmation) {
+    return buildConfirmedReply();
+  }
+
+  const nextOrderPrompt =
+    "Your last order is already confirmed. If you need another booking, send the size and quantity, or tell me if you need help with the confirmed order.";
+
+  if (parsed.analysis.intents.includes("pricing") || isPriceMessage(rawMessage)) {
+    return appendNextStep(buildPricingReply(), nextOrderPrompt);
+  }
+
+  if (
+    parsed.analysis.intents.includes("delivery_check") ||
+    parsed.analysis.intents.includes("availability_check")
+  ) {
+    return appendNextStep(buildAvailabilityReply(parsed), nextOrderPrompt);
+  }
+
+  if (
+    parsed.analysis.intents.includes("quality_check") ||
+    parsed.analysis.intents.includes("authenticity_check")
+  ) {
+    return appendNextStep(buildQualityTrustReply(), nextOrderPrompt);
+  }
+
+  if (
+    parsed.analysis.intents.includes("recommendation_request") ||
+    parsed.analysis.intents.includes("gifting")
+  ) {
+    return appendNextStep(buildRecommendationReply(parsed), nextOrderPrompt);
+  }
+
+  if (
+    parsed.analysis.intents.includes("corporate_order") ||
+    parsed.analysis.intents.includes("bulk_order")
+  ) {
+    return appendNextStep(buildCorporateReply(), nextOrderPrompt);
+  }
+
+  if (parsed.analysis.intents.includes("repeat_order")) {
+    return appendNextStep(buildRepeatOrderReply(), nextOrderPrompt);
+  }
+
+  if (
+    parsed.analysis.intents.includes("discount_request") ||
+    parsed.analysis.intents.includes("objection_price")
+  ) {
+    return appendNextStep(buildPriceObjectionReply(), nextOrderPrompt);
+  }
+
+  return nextOrderPrompt;
 }
 
 function stripTrailingPunctuation(input: string): string {
@@ -208,12 +443,10 @@ function isExactSizeMessage(message: string): boolean {
   return DIRECT_SIZE_MESSAGES.includes(text as ProductSize);
 }
 
-// isQuantityMessage is handled by parseQuantityValue internally
-
 function parseQuantityValue(input: string): number | null {
   const normalized = normalizeText(input);
   const match = normalized.match(
-    /^(\d+)\s*(dozen|doz|boxes|box|pc|pcs|kg|unit|units|peti|crate|qty)?$/
+    /^(\d+)\s*(dozen|doz|dzn|boxes|box|pc|pcs|kg|unit|units|peti|crate|carton|qty)?$/
   );
 
   if (!match) return null;
@@ -227,7 +460,7 @@ function parseQuantityValue(input: string): number | null {
 function extractQuantityMatch(message: string): QuantityMatch | null {
   const normalized = normalizeText(message);
   const regex =
-    /(^|[^a-z0-9])(\d+\s*(dozen|doz|boxes|box|pc|pcs|kg|unit|units|peti|crate|qty)?)(?=$|[^a-z0-9])/gi;
+    /(^|[^a-z0-9])(\d+\s*(dozen|doz|dzn|boxes|box|pc|pcs|kg|unit|units|peti|crate|carton|qty)?)(?=$|[^a-z0-9])/gi;
   const matches = [...normalized.matchAll(regex)];
 
   if (matches.length !== 1) return null;
@@ -247,19 +480,31 @@ function isLikelyName(message: string): boolean {
   const trimmed = message.trim();
   const normalized = stripTrailingPunctuation(normalizeText(trimmed));
 
-  // Names don't have question marks
   if (trimmed.includes("?")) return false;
-
   if (!normalized || normalized.length < 2) return false;
-  
-  // Names don't have digits
   if (/\d/.test(normalized)) return false;
-  
-  // Names are usually short but not single common words
-  const words = normalized.split(/\s+/);
-  if (words.length > 5) return false; // Too long for just a name
 
-  const smallTalk = ["yes", "no", "ok", "okay", "thanks", "thank", "sure", "now", "where", "how", "you", "there", "wait", "hello", "hi", "hey"];
+  const words = normalized.split(/\s+/);
+  if (words.length > 5) return false;
+
+  const smallTalk = [
+    "yes",
+    "no",
+    "ok",
+    "okay",
+    "thanks",
+    "thank",
+    "sure",
+    "now",
+    "where",
+    "how",
+    "you",
+    "there",
+    "wait",
+    "hello",
+    "hi",
+    "hey",
+  ];
   if (words.length === 1 && smallTalk.includes(words[0])) return false;
 
   if (isGreetingMessage(normalized) || isPriceMessage(normalized) || isConfirmationMessage(normalized)) {
@@ -299,11 +544,11 @@ function splitCheckoutSegments(message: string): string[] {
 function buildCheckoutReply(state: SalesState, order: Order | null): string | SalesReply {
   switch (state) {
     case "awaiting_quantity":
-      return "Great choice 🥭\n\nHow many boxes would you like?";
+      return "Good choice.\n\nHow many boxes would you like?";
     case "awaiting_name":
-      return "Perfect 👍\n\nMay I have your name please?";
+      return "May I have your name for this order?";
     case "awaiting_address":
-      return "Please share your full delivery address.";
+      return "Please share the full delivery address, including pin code if available.";
     case "awaiting_date":
       return "When would you like delivery?";
     case "awaiting_confirmation":
@@ -311,7 +556,7 @@ function buildCheckoutReply(state: SalesState, order: Order | null): string | Sa
     case "confirmed":
       return buildConfirmedReply();
     default:
-      return "Please tell me whether you want pricing or want to place an order.";
+      return "I can share pricing or begin the order. Which would you prefer?";
   }
 }
 
@@ -323,70 +568,116 @@ function deriveLeadTagForState(args: {
   const { nextState, parsed, orderAfter } = args;
 
   if (nextState === "human_handoff") return "human_required";
-  if (isLockedCheckoutState(nextState)) return "hot";
+  if (parsed.analysis.buyerType === "corporate") return "corporate_lead";
+  if (parsed.analysis.buyerType === "gifting") return "gift_lead";
+  if (parsed.analysis.buyerType === "repeat") return "repeat_customer";
+  if (isLockedCheckoutState(nextState) || parsed.analysis.temperature === "hot") return "hot";
 
-  return deriveLeadTag(parsed.intent, orderAfter?.quantity ?? parsed.quantity);
+  return deriveLeadTag(parsed.intent, orderAfter?.quantity ?? parsed.quantity, parsed.analysis);
 }
 
-export function normalizeText(input: string): string {
-  return input.trim().toLowerCase();
-}
+function mapAnalysisToLegacyIntent(analysis: CustomerMessageAnalysis): CustomerIntent {
+  if (
+    analysis.intents.includes("human_help_request") ||
+    analysis.intents.includes("complaint") ||
+    analysis.intents.includes("refund")
+  ) {
+    return "human_support";
+  }
 
-export function detectIntent(message: string): CustomerIntent {
-  const text = normalizeText(message);
+  if (
+    analysis.intents.includes("corporate_order") ||
+    analysis.intents.includes("bulk_order")
+  ) {
+    return "corporate";
+  }
 
-  if (HUMAN_KEYWORDS.some((keyword) => text.includes(keyword))) return "human_support";
-  if (CORPORATE_KEYWORDS.some((keyword) => text.includes(keyword))) return "corporate";
-  if (SUBSCRIPTION_KEYWORDS.some((keyword) => text.includes(keyword))) return "subscription";
-  if (GIFT_KEYWORDS.some((keyword) => text.includes(keyword))) return "gift";
-  if (isPriceMessage(text)) return "price";
-  if (DELIVERY_KEYWORDS.some((keyword) => text.includes(keyword))) return "delivery";
-  if (TRUST_KEYWORDS.some((keyword) => text.includes(keyword))) return "quality_trust";
-  if (STORE_KEYWORDS.some((keyword) => text.includes(keyword))) return "visit_store";
-  if (extractProductSize(text) || extractQuantity(text)) return "ready_to_buy";
+  if (analysis.intents.includes("gifting")) return "gift";
+  if (analysis.intents.includes("pricing")) return "price";
+
+  if (
+    analysis.intents.includes("delivery_check") ||
+    analysis.intents.includes("availability_check")
+  ) {
+    return "delivery";
+  }
+
+  if (
+    analysis.intents.includes("quality_check") ||
+    analysis.intents.includes("authenticity_check")
+  ) {
+    return "quality_trust";
+  }
+
+  if (
+    analysis.intents.includes("recommendation_request") ||
+    analysis.intents.includes("order_start") ||
+    analysis.intents.includes("product_selection") ||
+    analysis.intents.includes("address_submission") ||
+    analysis.intents.includes("payment_update") ||
+    analysis.intents.includes("order_confirmation_request") ||
+    analysis.intents.includes("discount_request") ||
+    analysis.intents.includes("objection_price") ||
+    analysis.intents.includes("repeat_order")
+  ) {
+    return "ready_to_buy";
+  }
 
   return "confused";
 }
 
+export function normalizeText(input: string): string {
+  return normalizeInboundText(input);
+}
+
+export function detectIntent(message: string): CustomerIntent {
+  return mapAnalysisToLegacyIntent(analyzeCustomerMessage({ rawText: message }));
+}
+
 export function extractProductSize(message: string): ProductSize | null {
-  const text = normalizeText(message);
-
-  if (/\bjumbo\b/.test(text)) return "jumbo";
-  if (/\blarge\b/.test(text)) return "large";
-  if (/\bmedium\b/.test(text)) return "medium";
-
-  return null;
+  return analyzeCustomerMessage({ rawText: message }).entities.productSize;
 }
 
 export function extractQuantity(message: string): number | null {
-  return parseQuantityValue(message);
+  const analysis = analyzeCustomerMessage({ rawText: message });
+  return analysis.entities.quantity?.value ?? parseQuantityValue(message);
 }
 
 export function parseSalesInput(message: string): ParsedSalesInput {
-  const normalized = normalizeText(message);
+  const analysis = analyzeCustomerMessage({ rawText: message });
 
   return {
-    intent: detectIntent(message),
-    productSize: extractProductSize(message),
-    quantity: extractQuantity(message),
+    intent: mapAnalysisToLegacyIntent(analysis),
+    productSize: analysis.entities.productSize,
+    quantity: analysis.entities.quantity?.value ?? parseQuantityValue(message),
     isConfirmation: isConfirmationMessage(message),
     isUpsellAccept: isUpsellMessage(message),
     isEdit: isEditMessage(message),
-    wantsHuman: HUMAN_KEYWORDS.some((keyword) => {
-      const regex = new RegExp(`\\b${keyword}\\b`, "i");
-      return regex.test(normalized);
-    }),
+    wantsHuman:
+      analysis.intents.includes("human_help_request") || analysis.escalation.autoHandoff,
     isGreeting: isGreetingMessage(message),
+    analysis,
   };
 }
 
-export function deriveLeadTag(intent: CustomerIntent, quantity: number | null): LeadTag {
-  if (intent === "human_support") return "human_required";
-  if (intent === "corporate" || (quantity !== null && quantity >= 5)) return "corporate_lead";
-  if (intent === "subscription") return "subscription_lead";
-  if (intent === "gift") return "gift_lead";
-  if (intent === "ready_to_buy") return "hot";
+export function deriveLeadTag(
+  intent: CustomerIntent,
+  quantity: number | null,
+  analysis?: CustomerMessageAnalysis
+): LeadTag {
+  if (analysis?.escalation.autoHandoff || intent === "human_support") return "human_required";
+  if (
+    analysis?.buyerType === "corporate" ||
+    intent === "corporate" ||
+    (quantity !== null && quantity >= 5)
+  ) {
+    return "corporate_lead";
+  }
+  if (analysis?.buyerType === "gifting" || intent === "gift") return "gift_lead";
+  if (analysis?.buyerType === "repeat") return "repeat_customer";
+  if (analysis?.temperature === "hot" || intent === "ready_to_buy") return "hot";
   if (intent === "price") return "price_seeker";
+  if (analysis?.temperature === "cold") return "cold";
   return "warm";
 }
 
@@ -410,7 +701,10 @@ export function getDeterministicTransition(args: {
   let nextState = currentState;
   let orderPatch: OrderPatch | null = null;
 
-  if (parsed.wantsHuman) {
+  if (parsed.analysis.escalation.autoHandoff || parsed.wantsHuman) {
+    handled = true;
+    nextState = "human_handoff";
+  } else if (currentState === "confirmed" && parsed.isEdit) {
     handled = true;
     nextState = "human_handoff";
   } else if (currentState === "confirmed" && parsed.isConfirmation) {
@@ -550,10 +844,14 @@ export function getDeterministicTransition(args: {
   } else if (currentState === "awaiting_confirmation") {
     handled = true;
 
-    if (parsed.isUpsellAccept && order?.quantity === 1 && !order?.notes?.includes("Upsell Accepted")) {
+    if (
+      parsed.isUpsellAccept &&
+      order?.quantity === 1 &&
+      !order?.notes?.includes("Upsell Accepted")
+    ) {
       orderPatch = {
         quantity: 2,
-        notes: (order.notes ? order.notes + "\n" : "") + "Upsell Accepted: ₹200 discount",
+        notes: `${order.notes ? `${order.notes}\n` : ""}Upsell Accepted: Rs 200 discount`,
         order_type: buildOrderType(parsed.intent, order),
         status: "awaiting_confirmation",
       };
@@ -578,8 +876,6 @@ export function getDeterministicTransition(args: {
         order_type: buildOrderType(parsed.intent, order),
         status: "awaiting_confirmation",
       };
-      nextState = "awaiting_confirmation";
-    } else if (parsed.isEdit) {
       nextState = "awaiting_confirmation";
     } else {
       nextState = "awaiting_confirmation";
@@ -619,7 +915,11 @@ export function getDeterministicTransition(args: {
       status: "draft",
     };
     nextState = "awaiting_quantity";
-  } else if ((currentState === "new" || currentState === "browsing") && order?.product_size && standaloneQuantity !== null) {
+  } else if (
+    (currentState === "new" || currentState === "browsing") &&
+    order?.product_size &&
+    standaloneQuantity !== null
+  ) {
     handled = true;
     nextState = "awaiting_name";
     orderPatch = {
@@ -671,24 +971,44 @@ export function buildSalesReply(
   conversation: Conversation,
   parsed: ParsedSalesInput,
   order: Order | null,
-  rawMessage: string
+  rawMessage: string,
+  options?: {
+    allowCheckoutAssist?: boolean;
+  }
 ): string | SalesReply | null {
   const state = normalizeSalesStateValue(conversation.sales_state);
   const canTriggerGreeting = state === "new" || state === "browsing";
+  const checkoutLocked = isLockedCheckoutState(state) && state !== "confirmed";
+  const allowCheckoutAssist = options?.allowCheckoutAssist ?? true;
 
-  if (parsed.wantsHuman) {
-    return "Understood. I am moving this chat to a human team member now. Please wait a moment.";
+  if (parsed.analysis.escalation.autoHandoff || parsed.wantsHuman) {
+    return buildEscalationReply(parsed);
   }
 
-  if (state === "awaiting_confirmation") {
-    if (parsed.isEdit) {
-      return {
-        text: "What would you like to change? (e.g., 'Make it 2 boxes', 'Change size to Large', or 'Restart')"
-      };
-    }
+  if (state === "human_handoff") {
+    return buildEscalationReply(parsed);
   }
 
-  if (isLockedCheckoutState(state) && state !== "confirmed") {
+  if (state === "awaiting_confirmation" && parsed.isEdit) {
+    return {
+      text: "Tell me exactly what you would like to change, and I will update the draft.",
+    };
+  }
+
+  const checkoutAssistReply = checkoutLocked && allowCheckoutAssist
+    ? buildLockedCheckoutAssistReply({
+        state,
+        parsed,
+        order,
+        rawMessage,
+      })
+    : null;
+
+  if (checkoutAssistReply) {
+    return checkoutAssistReply;
+  }
+
+  if (checkoutLocked) {
     return buildCheckoutReply(state, order);
   }
 
@@ -701,39 +1021,61 @@ export function buildSalesReply(
   }
 
   if (state === "confirmed") {
-    return buildConfirmedReply();
+    // Only deterministic if it's a direct re-confirmation
+    if (parsed.isConfirmation) {
+      return buildConfirmedStateReply(parsed, rawMessage);
+    }
+    // Otherwise return null to let AI handle complex post-confirm queries (cancel, change, status)
+    return null;
+  }
+
+  if (parsed.analysis.intents.includes("payment_update")) {
+    return buildPaymentUpdateReply();
+  }
+
+  if (parsed.analysis.intents.includes("recommendation_request")) {
+    return buildRecommendationReply(parsed);
   }
 
   if (parsed.productSize || isExactSizeMessage(rawMessage)) {
     return buildCheckoutReply("awaiting_quantity", order);
   }
 
-  if (parsed.intent === "delivery") {
-    return "We deliver across Mumbai and Thane. Would you like pricing first or are you ready to place an order?";
+  if (parsed.analysis.intents.includes("delivery_check")) {
+    return buildAvailabilityReply(parsed);
   }
 
-  if (parsed.intent === "quality_trust") {
-    return "Every mango is hand-checked, GI tagged, and naturally ripened without carbide. Would you like pricing first or are you ready to place an order?";
+  if (
+    parsed.analysis.intents.includes("quality_check") ||
+    parsed.analysis.intents.includes("authenticity_check")
+  ) {
+    return buildQualityTrustReply();
   }
 
-  if (parsed.intent === "gift") {
-    return "For gifting, Jumbo is our premium pick. Would you like to reserve one or more boxes?";
+  if (parsed.analysis.intents.includes("gifting")) {
+    return buildRecommendationReply(parsed);
   }
 
-  if (parsed.intent === "corporate") {
-    return "We handle corporate mango gifting as well. Share the quantity and delivery area, and I will guide you through the order.";
+  if (
+    parsed.analysis.intents.includes("corporate_order") ||
+    parsed.analysis.intents.includes("bulk_order")
+  ) {
+    return buildCorporateReply();
   }
 
-  if (parsed.intent === "subscription") {
-    return "We can help with repeat seasonal orders too. Tell me the box size you want to start with.";
+  if (parsed.analysis.intents.includes("repeat_order")) {
+    return buildRepeatOrderReply();
   }
 
-  if (parsed.intent === "visit_store") {
-    return "You can visit us at 1st Floor, The Walk, Hiranandani Estate, Thane. Would you like pricing first or would you like to place an order?";
+  if (
+    parsed.analysis.intents.includes("discount_request") ||
+    parsed.analysis.intents.includes("objection_price")
+  ) {
+    return buildPriceObjectionReply();
   }
 
   if (parsed.quantity && !parsed.productSize && !order?.product_size) {
-    return "Which size would you like? Medium, Large, or Jumbo?";
+    return "Which size would you like: Medium, Large, or Jumbo?";
   }
 
   return null;
@@ -741,12 +1083,18 @@ export function buildSalesReply(
 
 export function getCheckoutFallback(state: SalesState): string {
   switch (state) {
-    case "awaiting_quantity": return "How many boxes would you like? (e.g., '2 boxes')";
-    case "awaiting_name": return "I'll need your name to continue the order. What's your name?";
-    case "awaiting_address": return "Could you please share the delivery address?";
-    case "awaiting_date": return "When should we deliver these mangoes?";
-    case "awaiting_confirmation": return "Please confirm the order above so I can send it to the team.";
-    default: return "I'm sorry, I didn't catch that. Could you please provide the details for your order?";
+    case "awaiting_quantity":
+      return "How many boxes would you like? For example, 2 boxes.";
+    case "awaiting_name":
+      return "I will need the customer name to continue this order.";
+    case "awaiting_address":
+      return "Please share the delivery address, including pin code if available.";
+    case "awaiting_date":
+      return "What delivery date should I note for this order?";
+    case "awaiting_confirmation":
+      return "Please confirm the order summary so I can lock it in.";
+    default:
+      return "Please share the next order detail so I can continue.";
   }
 }
 
@@ -823,14 +1171,14 @@ export async function updateConversationSalesFields(args: {
   expectedUpdatedAt?: string;
   name?: string;
 }) {
-  const { 
-    conversationId, 
-    salesState, 
-    leadTag, 
-    lastCustomerIntent, 
+  const {
+    conversationId,
+    salesState,
+    leadTag,
+    lastCustomerIntent,
     resetFollowUpCount,
     expectedUpdatedAt,
-    name
+    name,
   } = args;
 
   const patch: Record<string, unknown> = {
@@ -845,10 +1193,7 @@ export async function updateConversationSalesFields(args: {
     patch.follow_up_count = 0;
   }
 
-  let query = supabase
-    .from("conversations")
-    .update(patch)
-    .eq("id", conversationId);
+  let query = supabase.from("conversations").update(patch).eq("id", conversationId);
 
   if (expectedUpdatedAt) {
     query = query.eq("updated_at", expectedUpdatedAt);

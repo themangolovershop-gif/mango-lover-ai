@@ -1,0 +1,669 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ConversationChannel {
+  WHATSAPP
+  INSTAGRAM
+  FACEBOOK
+  WEBCHAT
+  MANUAL_CALL
+}
+
+enum InsightImpact {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum InsightCategory {
+  REVENUE
+  CONVERSION
+  PRODUCT
+  CHANNEL
+  SEGMENT
+  RISK
+  OPPORTUNITY
+}
+
+model ExecutiveInsight {
+  id              String          @id @default(uuid())
+  category        InsightCategory
+  impact          InsightImpact
+  title           String
+  description     String
+  suggestedAction String?
+  confidence      Float           @default(1.0)
+  metricValue     Float? // For storing related number (e.g. conversion rate)
+  dataSnapshot    Json? // The data behind the insight
+  isDismissed     Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING_HUMAN
+  RESOLVED
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageSender {
+  CUSTOMER
+  AI
+  HUMAN
+  SYSTEM
+}
+
+enum LeadSource {
+  WHATSAPP
+  ORGANIC
+  MANUAL
+  REFERRAL
+  IMPORT
+}
+
+enum BuyerType {
+  PERSONAL
+  GIFTING
+  BULK
+  REPEAT
+  UNCERTAIN
+}
+
+enum LeadStage {
+  NEW                     @map("new")
+  BROWSING                @map("browsing")
+  AWAITING_QUANTITY       @map("awaiting_quantity")
+  AWAITING_ADDRESS        @map("awaiting_address")
+  AWAITING_DATE           @map("awaiting_date")
+  AWAITING_CONFIRMATION   @map("awaiting_confirmation")
+  CONFIRMED               @map("confirmed")
+  HUMAN_HANDOFF           @map("human_handoff")
+  LOST                    @map("lost")
+}
+
+enum LeadTemperature {
+  COLD
+  WARM
+  HOT
+}
+
+enum ProductSize {
+  MEDIUM
+  LARGE
+  JUMBO
+}
+
+enum OrderStatus {
+  DRAFT                    @map("draft")
+  AWAITING_CONFIRMATION    @map("awaiting_confirmation")
+  CONFIRMED                @map("confirmed")
+  CANCELLED                @map("cancelled")
+}
+
+enum PaymentStatus {
+  UNPAID
+  SUBMITTED
+  VERIFIED
+  FAILED
+  PARTIAL
+  REFUNDED
+}
+
+enum FulfillmentStatus {
+  NOT_STARTED
+  PREPARING
+  PACKED
+  SHIPPED
+  DELIVERED
+}
+
+enum PaymentMethod {
+  UPI
+  BANK_TRANSFER
+  CASH
+  CARD
+  OTHER
+}
+
+enum FollowUpType {
+  NO_RESPONSE
+  PAYMENT_PENDING
+  DETAILS_PENDING
+  REPEAT_REACTIVATION
+}
+
+enum FollowUpStatus {
+  PENDING
+  SENT
+  CANCELLED
+  FAILED
+}
+
+enum EscalationType {
+  COMPLAINT
+  BULK_ORDER
+  REFUND_REQUEST
+  PAYMENT_CONFLICT
+  LOW_CONFIDENCE
+  HIGH_RISK_LOGISTICS
+}
+
+enum EscalationSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum EscalationStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum ExperimentStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum ExperimentType {
+  RECOMMENDATION_COPY
+  PRICE_OBJECTION_COPY
+  FOLLOW_UP_TIMING
+  REORDER_REMINDER_COPY
+  PAYMENT_REMINDER_COPY
+}
+
+enum HumanCorrectionType {
+  REPLY_REWRITE
+  NEXT_ACTION_OVERRIDE
+  LEAD_STAGE_OVERRIDE
+  ORDER_RECOMMENDATION_CHANGE
+  HUMAN_TAKEOVER
+  COMPLAINT_RECOVERY
+  OTHER
+}
+
+enum OptimizationInsightCategory {
+  REPLY_STRATEGY
+  RECOMMENDATION
+  FOLLOW_UP_TIMING
+  OBJECTION
+  HUMAN_OVERRIDE
+  SEGMENT_CONVERSION
+  EXPERIMENT
+}
+
+enum OptimizationInsightStatus {
+  OPEN
+  REVIEWED
+  APPLIED
+  DISMISSED
+}
+
+model Customer {
+  id                    String                   @id @default(uuid())
+  name                  String
+  phone                 String                   @unique
+  email                 String?                  @unique
+  preferredLanguage     String?
+  city                  String?
+  state                 String?
+  pinCode               String?
+  notes                 String?
+  isRepeatBuyer         Boolean                  @default(false)
+  addresses             CustomerAddress[]
+  conversations         Conversation[]
+  leads                 Lead[]
+  orders                Order[]
+  escalations           Escalation[]
+  analyticsEvents       AnalyticsEvent[]
+  experimentAssignments ExperimentAssignment[]
+  humanFeedbackEvents   HumanFeedbackEvent[]
+  memory                CustomerMemory?
+  salesActions          SalesActionQueue[]
+  socialIdentities      CustomerSocialIdentity[]
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+}
+
+model CustomerSocialIdentity {
+  id         String @id @default(uuid())
+  customerId String
+  provider   String // "instagram", "facebook", "web", etc.
+  handle     String // The social ID or username
+  metadata   Json?
+
+  customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, handle])
+  @@index([customerId])
+}
+
+model CustomerAddress {
+  id         String   @id @default(uuid())
+  customerId String
+  label      String?
+  line1      String
+  line2      String?
+  area       String?
+  landmark   String?
+  city       String
+  state      String
+  pinCode    String
+  isDefault  Boolean  @default(false)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([customerId])
+}
+
+model Conversation {
+  id                    String                 @id @default(uuid())
+  customerId            String
+  channel               ConversationChannel
+  status                ConversationStatus     @default(OPEN)
+  currentStage          LeadStage              @map("sales_state")
+  buyerType             String?                @map("lead_tag")
+  lastInboundAt         DateTime?              @map("updated_at") // Using updated_at as proxy for now
+  lastOutboundAt        DateTime?
+  assignedHumanId       String?
+  summary               String?
+  customer              Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  messages              Message[]
+  lead                  Lead?
+  orders                Order[]
+  followUps             FollowUp[]
+  escalations           Escalation[]
+  analyticsEvents       AnalyticsEvent[]
+  experimentAssignments ExperimentAssignment[]
+  humanFeedbackEvents   HumanFeedbackEvent[]
+  sessionMemory         ConversationMemory?
+  salesActions          SalesActionQueue[]
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+}
+
+model CustomerMemory {
+  id          String   @id @default(uuid())
+  customerId  String   @unique
+  profileJson Json
+  salesJson   Json?
+  vipScore    Int      @default(0)
+  lastSummary String?
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([vipScore])
+}
+
+model ConversationMemory {
+  id             String       @id @default(uuid())
+  conversationId String       @unique
+  stateJson      Json
+  summary        String?
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Message {
+  id                String           @id @default(uuid())
+  conversationId    String
+  direction         MessageDirection
+  rawText           String
+  normalizedText    String?
+  detectedIntent    String?
+  confidence        Float?
+  entitiesJson      Json?
+  sentBy            MessageSender
+  providerMessageId String?          @unique
+  conversation      Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt         DateTime         @default(now())
+
+  @@index([conversationId])
+  @@index([direction])
+}
+
+model Lead {
+  id               String             @id @default(uuid())
+  customerId       String
+  conversationId   String             @unique
+  source           LeadSource
+  buyerType        BuyerType
+  stage            LeadStage
+  score            Int                @default(0)
+  temperature      LeadTemperature
+  tagsJson         Json?
+  objectionType    String?
+  nextFollowUpAt   DateTime?
+  lastFollowUpAt   DateTime?
+  followUpCount    Int                @default(0)
+  needsHuman       Boolean            @default(false)
+  escalationReason String?
+  customer         Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  conversation     Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  orders           Order[]
+  followUps        FollowUp[]
+  escalations      Escalation[]
+  analyticsEvents  AnalyticsEvent[]
+  salesActions     SalesActionQueue[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([customerId])
+  @@index([stage])
+  @@index([temperature])
+}
+
+model Product {
+  id                String      @id @default(uuid())
+  name              String
+  slug              String      @unique
+  size              ProductSize
+  price             Decimal     @db.Decimal(10, 2)
+  active            Boolean     @default(true)
+  cityRulesJson     Json?
+  deliveryRulesJson Json?
+  orderItems        OrderItem[]
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@index([active])
+  @@index([size])
+}
+
+model Order {
+  id                String            @id @default(uuid())
+  customerId        String
+  conversationId    String
+  leadId            String
+  orderNumber       String            @unique
+  status            OrderStatus       @default(DRAFT)
+  paymentStatus     PaymentStatus     @default(UNPAID)
+  fulfillmentStatus FulfillmentStatus @default(NOT_STARTED)
+  subtotal          Decimal           @db.Decimal(10, 2)
+  deliveryCharge    Decimal           @db.Decimal(10, 2)
+  discountAmount    Decimal           @db.Decimal(10, 2)
+  totalAmount       Decimal           @db.Decimal(10, 2)
+  currency          String            @default("INR") @db.VarChar(3)
+  notes             String?
+  paymentReference  String?
+  customer          Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  conversation      Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  lead              Lead              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  items             OrderItem[]
+  payments          Payment[]
+  analyticsEvents   AnalyticsEvent[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([customerId])
+  @@index([conversationId])
+  @@index([leadId])
+  @@index([status])
+  @@index([paymentStatus])
+}
+
+model OrderItem {
+  id           String  @id @default(uuid())
+  orderId      String
+  productId    String
+  quantity     Int
+  unitPrice    Decimal @db.Decimal(10, 2)
+  lineTotal    Decimal @db.Decimal(10, 2)
+  metadataJson Json?
+  order        Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product      Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  orderId       String
+  amount        Decimal       @db.Decimal(10, 2)
+  method        PaymentMethod
+  status        PaymentStatus @default(SUBMITTED)
+  reference     String?
+  screenshotUrl String?
+  verifiedBy    String?
+  paidAt        DateTime?
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@index([reference])
+}
+
+model FollowUp {
+  id               String         @id @default(uuid())
+  leadId           String
+  conversationId   String
+  type             FollowUpType
+  reason           String
+  suggestedMessage String?
+  scheduledAt      DateTime
+  status           FollowUpStatus @default(PENDING)
+  sentAt           DateTime?
+  result           String?
+  lead             Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation     Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([leadId])
+  @@index([conversationId])
+  @@index([status])
+  @@index([scheduledAt])
+}
+
+model Escalation {
+  id              String             @id @default(uuid())
+  leadId          String
+  conversationId  String
+  customerId      String
+  type            EscalationType
+  severity        EscalationSeverity
+  status          EscalationStatus   @default(OPEN)
+  reason          String
+  resolutionNotes String?
+  assignedTo      String?
+  lead            Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation    Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customer        Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([leadId])
+  @@index([conversationId])
+  @@index([customerId])
+  @@index([status])
+  @@index([severity])
+}
+
+enum SalesActionType {
+  SEND_FOLLOWUP
+  SEND_PAYMENT_REMINDER
+  SEND_REORDER_NUDGE
+  FLAG_VIP
+  CREATE_OPERATOR_TASK
+  ESCALATE_HUMAN
+  MARK_COLD
+}
+
+enum SalesActionStatus {
+  PENDING
+  APPROVED
+  SENT
+  SKIPPED
+  FAILED
+}
+
+model SalesActionQueue {
+  id             String            @id @default(uuid())
+  customerId     String
+  leadId         String?
+  conversationId String?
+  actionType     SalesActionType
+  status         SalesActionStatus @default(PENDING)
+  priority       Int               @default(3) // 1=High, 5=Low
+  reason         String?
+  payloadJson    Json? // Stores the message body or task details
+  scheduledAt    DateTime
+  sentAt         DateTime?
+  error          String?
+
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lead         Lead?         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([actionType])
+}
+
+model AnalyticsEvent {
+  id             String        @id @default(uuid())
+  customerId     String?
+  conversationId String?
+  leadId         String?
+  orderId        String?
+  eventType      String
+  payloadJson    Json?
+  customer       Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  lead           Lead?         @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  order          Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+
+  @@index([customerId])
+  @@index([conversationId])
+  @@index([leadId])
+  @@index([orderId])
+  @@index([eventType])
+}
+
+model StrategyPerformance {
+  id                  String              @id @default(uuid())
+  strategyName        String
+  intentType          String
+  buyerSegment        String
+  channel             ConversationChannel
+  usesCount           Int                 @default(0)
+  responseCount       Int                 @default(0)
+  orderStartCount     Int                 @default(0)
+  paymentSubmitCount  Int                 @default(0)
+  confirmedOrderCount Int                 @default(0)
+  dropOffCount        Int                 @default(0)
+  followUpSentCount   Int                 @default(0)
+  followUpReplyCount  Int                 @default(0)
+  reorderCount        Int                 @default(0)
+  humanOverrideCount  Int                 @default(0)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@unique([strategyName, intentType, buyerSegment, channel])
+  @@index([intentType, buyerSegment, channel])
+}
+
+model Experiment {
+  id               String                 @id @default(uuid())
+  name             String
+  type             ExperimentType
+  status           ExperimentStatus       @default(DRAFT)
+  variantA         Json
+  variantB         Json
+  audienceRuleJson Json?
+  startedAt        DateTime?
+  endedAt          DateTime?
+  assignments      ExperimentAssignment[]
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  @@index([status, type])
+}
+
+model ExperimentAssignment {
+  id             String       @id @default(uuid())
+  experimentId   String
+  conversationId String
+  customerId     String
+  variant        String
+  outcomeLabel   String?
+  metadataJson   Json?
+  experiment     Experiment   @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([experimentId, conversationId])
+  @@index([customerId, variant])
+}
+
+model HumanFeedbackEvent {
+  id               String              @id @default(uuid())
+  conversationId   String
+  customerId       String?
+  messageId        String?
+  aiSuggestionType String
+  aiSuggestedReply String?
+  humanFinalReply  String?
+  correctionType   HumanCorrectionType
+  reason           String?
+  metadataJson     Json?
+  conversation     Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customer         Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdAt        DateTime            @default(now())
+
+  @@index([conversationId, correctionType])
+  @@index([customerId])
+}
+
+model OptimizationInsight {
+  id                 String                      @id @default(uuid())
+  category           OptimizationInsightCategory
+  title              String
+  description        String
+  confidence         Float
+  impactLevel        String
+  status             OptimizationInsightStatus   @default(OPEN)
+  supportingDataJson Json?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+
+  @@index([category, status])
+  @@index([createdAt])
+}

@@ -1,4 +1,4 @@
-import { ConversationWithLastMessage, Order, FollowUp, SalesState } from "@/lib/types";
+import { ConversationWithLastMessage, SalesState } from "@/lib/types";
 import { MetricCard } from "./MetricCard";
 import { TrendingUp, CheckCircle2, Activity, AlertCircle, History } from "lucide-react";
 

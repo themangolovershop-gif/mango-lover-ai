@@ -1,5 +1,5 @@
 import { ConversationWithLastMessage, FilterKey } from "@/lib/types";
-import { Search, Clock, User, BarChart3, TrendingUp, ShoppingCart, CheckCircle2 } from "lucide-react";
+import { Search, BarChart3, TrendingUp, ShoppingCart, CheckCircle2 } from "lucide-react";
 
 interface SidebarProps {
   conversations: ConversationWithLastMessage[];

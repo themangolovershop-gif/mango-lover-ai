@@ -2,6 +2,7 @@ import "server-only";
 
 import { supabase } from "@/lib/supabase";
 import { sizeLabel } from "@/lib/sales";
+import { DEFAULT_SALES_SETTINGS } from "@/lib/sales-settings";
 import type { Conversation, Order } from "@/lib/types";
 
 type FollowUpTemplateResult = {
@@ -26,27 +27,27 @@ export function pickAutoFollowUpTemplate(args: {
   const { conversation, draftOrder } = args;
   const count = conversation.follow_up_count || 0;
 
-  // We only send up to 3 automated follow-ups per state change
-  if (count >= 3) {
+  if (count >= DEFAULT_SALES_SETTINGS.followUp.maxAttempts) {
     return { message: null, reason: null, delayHours: null };
   }
 
   if (conversation.sales_state === "browsing") {
     return {
       message:
-        "Hey, The Corporate Mango here. 🥭\n\nWould you like me to recommend the best box for home use or gifting?",
+        "Checking in from The Mango Lover Shop.\n\nIf you'd like, I can recommend the best box for home use or gifting.",
       reason: "browsing_reminder",
-      delayHours: count === 0 ? 1 : 24,
+      delayHours: count === 0 ? 4 : 24,
     };
   }
 
   if (conversation.sales_state === "awaiting_quantity") {
     return {
-      message: count === 0 
-        ? "Good choice. How many boxes should I keep ready for you? 📦"
-        : "Still thinking about the quantity? Just let me know and I'll reserve your boxes.",
+      message:
+        count === 0
+          ? "Your preferred box is ready to note.\n\nJust send the quantity you want, and I will prepare the draft."
+          : "Following up on the quantity for your mango order.\n\nOnce you send it, I can move this ahead.",
       reason: "quantity_reminder",
-      delayHours: count === 0 ? 2 : 24,
+      delayHours: count === 0 ? 4 : 24,
     };
   }
 
@@ -54,25 +55,25 @@ export function pickAutoFollowUpTemplate(args: {
     return {
       message:
         count === 0
-          ? "Almost done with your order! Just your name please so I can keep the mangoes ready for you? 🥭"
-          : "I'm still holding your mangoes. May I know your name to finalize the draft?",
+          ? "Your order draft is almost ready.\n\nMay I have the customer name for it?"
+          : "Following up on the order name so I can keep the draft complete.",
       reason: "name_reminder",
-      delayHours: count === 0 ? 3 : 24,
+      delayHours: count === 0 ? 6 : 24,
     };
   }
 
   if (conversation.sales_state === "awaiting_address") {
     const name = draftOrder?.customer_name || "there";
     const size = draftOrder?.product_size ? sizeLabel(draftOrder.product_size) : "premium";
-    const qty = draftOrder?.quantity ? `${draftOrder.quantity} boxes of ` : "";
+    const qty = draftOrder?.quantity ? `${draftOrder.quantity} box${draftOrder.quantity > 1 ? "es" : ""}` : "the selected";
 
     return {
       message:
         count === 0
-          ? `Hi ${name}, I've got your order for ${qty}${size} mangoes ready. 🥭\n\nWhere should we deliver them?`
-          : `Hey ${name}, wouldn't want you to miss out on these ${size} mangoes! Just send your address and we are good to go. 🚚`,
+          ? `Hi ${name}, I have ${qty} of ${size} noted.\n\nPlease share the delivery address so I can complete the draft.`
+          : `Following up on the delivery address for your ${size} mango order.`,
       reason: "address_reminder",
-      delayHours: count === 0 ? 4 : 24,
+      delayHours: count === 0 ? 6 : 24,
     };
   }
 
@@ -81,29 +82,29 @@ export function pickAutoFollowUpTemplate(args: {
     return {
       message:
         count === 0
-          ? `Got the address, ${name}! 👍\n\nWhen would you like us to deliver your mangoes?`
-          : `Hi ${name}, just checking if you had a delivery date in mind for your mango boxes?`,
+          ? `Hi ${name}, I have the address ready.\n\nPlease share the delivery date you want for this order.`
+          : `Following up on the delivery date so I can lock the order correctly.`,
       reason: "date_reminder",
-      delayHours: count === 0 ? 4 : 24,
+      delayHours: count === 0 ? 6 : 24,
     };
   }
 
   if (conversation.sales_state === "awaiting_confirmation" && draftOrder) {
-    const address = draftOrder.delivery_address || "your place";
+    const address = draftOrder.delivery_address || "your address";
     return {
       message:
         count === 0
-          ? `Ready to ship to ${address}! 🚚\n\nJust reply CONFIRM to lock in your order.`
-          : `Holding your shipment to ${address}. Please reply CONFIRM to finalize, or let me know if you need to change anything!`,
+          ? `Your order draft for ${address} is ready.\n\nPlease reply CONFIRM if everything looks right.`
+          : `Following up on the order confirmation for ${address}.`,
       reason: "confirmation_reminder",
-      delayHours: count === 0 ? 2 : 12,
+      delayHours: count === 0 ? 4 : 18,
     };
   }
 
   if (conversation.sales_state === "confirmed") {
     return {
       message:
-        "The Corporate Mango checking in.\n\nMost mango lovers reorder within a week during the season.\n\nWould you like me to reserve your next batch?",
+        "A quick note from The Mango Lover Shop.\n\nIf you'd like another batch during the season, I can help you reserve it early.",
       reason: "repeat_buyer_reactivation",
       delayHours: 120,
     };
@@ -112,7 +113,7 @@ export function pickAutoFollowUpTemplate(args: {
   if (conversation.lead_tag === "corporate_lead") {
     return {
       message:
-        "Just following up on your corporate mango gifting requirement.\n\nWe can help with premium boxes for teams, clients, and events.\n\nWould you like me to prepare options?",
+        "Following up on your premium gifting requirement.\n\nIf you share the quantity and delivery city, our team can guide you correctly.",
       reason: "corporate_follow_up",
       delayHours: 24,
     };

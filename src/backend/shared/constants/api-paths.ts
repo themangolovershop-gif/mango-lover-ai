@@ -1,0 +1,15 @@
+export const API_PATHS = {
+  health: "/health",
+  whatsappWebhook: "/webhooks/whatsapp",
+  customers: "/api/customers",
+  conversations: "/api/conversations",
+  messages: "/api/messages",
+  leads: "/api/leads",
+  products: "/api/products",
+  orders: "/api/orders",
+  payments: "/api/payments",
+  followUps: "/api/followups",
+  escalations: "/api/escalations",
+  ai: "/api/ai",
+  analytics: "/api/analytics",
+} as const;
