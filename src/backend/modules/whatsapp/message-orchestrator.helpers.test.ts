@@ -22,7 +22,7 @@ import {
 describe('message-orchestrator.helpers', () => {
   it('maps derived lead metadata back to Prisma enums', () => {
     expect(mapBuyerTypeToPrisma('BULK')).toBe(BuyerType.BULK);
-    expect(mapLeadStageToPrisma('AWAITING_PAYMENT')).toBe('AWAITING_PAYMENT');
+    expect(mapLeadStageToPrisma('AWAITING_PAYMENT')).toBe('AWAITING_CONFIRMATION');
     expect(mapLeadTemperatureToPrisma('HOT')).toBe('HOT');
   });
 
@@ -33,7 +33,7 @@ describe('message-orchestrator.helpers', () => {
       conversationId: 'conversation-1',
       leadId: 'lead-1',
       orderNumber: 'MLS-123456',
-      status: OrderStatus.PENDING_PAYMENT,
+      status: OrderStatus.AWAITING_CONFIRMATION,
       paymentStatus: PaymentStatus.UNPAID,
       fulfillmentStatus: FulfillmentStatus.NOT_STARTED,
       subtotal: new Prisma.Decimal(3798),

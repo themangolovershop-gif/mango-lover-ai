@@ -1,5 +1,10 @@
 import type { AgentContext, AgentResult } from './types';
 
+type CandidateReply = {
+  agents: AgentResult['agent'][];
+  text: string;
+};
+
 function normalize(text: string) {
   return text
     .toLowerCase()
@@ -39,9 +44,90 @@ function dedupeSentences(text: string) {
   return unique.slice(0, 3).join(' ');
 }
 
+function hasStoryTone(text: string) {
+  const normalized = normalize(text);
+  return [
+    'acha question hai',
+    'sach bataun',
+    'honestly',
+    'bilkul',
+    'real devgad alphonso',
+    'naturally ripened',
+  ].some((marker) => normalized.includes(marker));
+}
+
+function isOperationalContext(context: AgentContext) {
+  return context.intents.some((intent) =>
+    [
+      'restart_order_request',
+      'cancellation',
+      'reset_conversation',
+      'payment_update',
+      'order_summary_request',
+      'edit_order_request',
+      'human_help_request',
+      'complaint',
+      'refund',
+    ].includes(intent)
+  );
+}
+
+function getStoryLead(context: AgentContext) {
+  if (context.intents.includes('pricing') || context.intents.includes('objection_price')) {
+    return 'Acha question hai. Premium Alphonso ka real difference consistency aur natural ripening me feel hota hai.';
+  }
+
+  if (
+    context.intents.includes('quality_check') ||
+    context.intents.includes('authenticity_check') ||
+    context.intents.includes('delivery_check') ||
+    context.intents.includes('availability_check')
+  ) {
+    return 'Sach bataun, real Devgad Alphonso ka difference aroma, texture aur overall feel me jaldi samajh aata hai.';
+  }
+
+  if (context.intents.includes('recommendation_request') || context.intents.includes('gifting')) {
+    return 'Har buyer ka use-case alag hota hai, isliye size suggest karne se pehle thoda context samajhna best rehta hai.';
+  }
+
+  if (
+    context.intents.includes('greeting') ||
+    context.intents.includes('product_selection') ||
+    context.intents.includes('order_start')
+  ) {
+    return 'Bilkul. Pehle requirement samajh lete hain, phir sahi box choose karna easy ho jata hai.';
+  }
+
+  return null;
+}
+
+function applyPersonalityPass(
+  context: AgentContext,
+  candidate: CandidateReply
+) {
+  const compact = dedupeSentences(candidate.text);
+
+  if (
+    isOperationalContext(context) ||
+    candidate.agents.includes('recovery') ||
+    candidate.agents.includes('order_ops') ||
+    hasStoryTone(compact)
+  ) {
+    return compact;
+  }
+
+  const storyLead = getStoryLead(context);
+
+  if (!storyLead) {
+    return compact;
+  }
+
+  return dedupeSentences(`${storyLead} ${compact}`);
+}
+
 function buildFallback(context: AgentContext) {
   if (context.intents.includes('restart_order_request') || context.intents.includes('cancellation')) {
-    return 'Understood. We can start fresh. Tell me the size and quantity you want, and I will guide you.';
+    return 'Theek hai, fresh shuru karte hain. Aap size aur quantity bata do, main aage simple rakhunga.';
   }
 
   if (
@@ -49,14 +135,39 @@ function buildFallback(context: AgentContext) {
     context.intents.includes('human_help_request') ||
     context.intents.includes('refund')
   ) {
-    return 'I am moving this to a human team member so it is handled properly. Please give us a moment.';
+    return 'Samajh gaya. Isko main human team tak pahucha raha hoon so it gets handled properly. Thoda sa time dijiye.';
   }
 
   if (context.latestOrder) {
-    return 'I may be narrowing this too much. Would you like to continue the current order, change it, or start fresh?';
+    return 'Sach bataun, is point par best ye hai ki aap seedha bata do: current order continue karna hai, change karna hai, ya fresh start chahiye?';
   }
 
-  return 'Tell me what you need, and I will guide you clearly. If you want, I can help with pricing, a recommendation, or a fresh order.';
+  return 'Bilkul. Aap price samajhna chahte ho, recommendation chahiye, ya bas real Alphonso ka difference explore karna chahte ho? Main simple tareeke se guide kar dunga.';
+}
+
+function maybeBlendAdvisoryAndSales(
+  context: AgentContext,
+  ordered: AgentResult[]
+) {
+  if (isOperationalContext(context)) {
+    return null;
+  }
+
+  const expertReply = ordered.find(
+    (result) => result.agent === 'mango_expert' && result.replyHint
+  );
+  const salesReply = ordered.find(
+    (result) => result.agent === 'sales' && result.replyHint
+  );
+
+  if (!expertReply || !salesReply) {
+    return null;
+  }
+
+  return {
+    agents: ['mango_expert', 'sales'] as AgentResult['agent'][],
+    text: `${expertReply.replyHint as string} ${salesReply.replyHint as string}`,
+  };
 }
 
 export class ResponseComposer {
@@ -85,17 +196,39 @@ export class ResponseComposer {
         return right.confidence - left.confidence;
       });
     const candidates = ordered
-      .map((result) => result.replyHint as string)
-      .filter((reply, index, replies) => replies.findIndex((item) => isSimilar(item, reply)) === index);
+      .map((result) => ({
+        agents: [result.agent],
+        text: result.replyHint as string,
+      }))
+      .filter(
+        (candidate, index, replies) =>
+          replies.findIndex((item) => isSimilar(item.text, candidate.text)) === index
+      );
+
+    const blended = maybeBlendAdvisoryAndSales(context, ordered);
+    if (blended) {
+      const polishedBlend = applyPersonalityPass(context, blended);
+
+      if (
+        !context.recentAssistantReplies.some((previous) => isSimilar(polishedBlend, previous))
+      ) {
+        return polishedBlend;
+      }
+    }
 
     for (const candidate of candidates) {
-      if (!context.recentAssistantReplies.some((previous) => isSimilar(candidate, previous))) {
-        return dedupeSentences(candidate);
+      const polishedCandidate = applyPersonalityPass(context, candidate);
+
+      if (!context.recentAssistantReplies.some((previous) => isSimilar(polishedCandidate, previous))) {
+        return polishedCandidate;
       }
     }
 
     for (let index = 0; index < candidates.length - 1; index += 1) {
-      const combined = dedupeSentences(`${candidates[index]} ${candidates[index + 1]}`);
+      const combined = applyPersonalityPass(context, {
+        agents: [...candidates[index].agents, ...candidates[index + 1].agents],
+        text: `${candidates[index].text} ${candidates[index + 1].text}`,
+      });
 
       if (!context.recentAssistantReplies.some((previous) => isSimilar(combined, previous))) {
         return combined;

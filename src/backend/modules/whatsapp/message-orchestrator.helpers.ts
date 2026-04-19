@@ -18,7 +18,29 @@ export function mapBuyerTypeToPrisma(buyerType: DetectedBuyerType) {
 }
 
 export function mapLeadStageToPrisma(stage: DerivedLeadStage) {
-  return LeadStage[stage];
+  switch (stage) {
+    case 'NEW_INQUIRY':
+    case 'COLD':
+      return LeadStage.NEW;
+    case 'ENGAGED':
+      return LeadStage.BROWSING;
+    case 'QUALIFIED':
+      return LeadStage.AWAITING_QUANTITY;
+    case 'AWAITING_DETAILS':
+      return LeadStage.AWAITING_ADDRESS;
+    case 'AWAITING_PAYMENT':
+    case 'PAYMENT_SUBMITTED':
+      return LeadStage.AWAITING_CONFIRMATION;
+    case 'CONFIRMED':
+      return LeadStage.CONFIRMED;
+    case 'COMPLAINT_OPEN':
+    case 'ESCALATED':
+      return LeadStage.HUMAN_HANDOFF;
+    case 'LOST':
+      return LeadStage.LOST;
+    default:
+      return LeadStage.NEW;
+  }
 }
 
 export function mapLeadTemperatureToPrisma(temperature: 'COLD' | 'WARM' | 'HOT') {

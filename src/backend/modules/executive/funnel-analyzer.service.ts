@@ -1,4 +1,5 @@
 import { getPrismaClient } from "@/backend/shared/lib/prisma";
+import { LeadStage } from "@prisma/client";
 
 export type FunnelState = {
   stage: string;
@@ -28,7 +29,7 @@ export class FunnelAnalyzerService {
     for (const stage of stages) {
       const count = await this.prisma.lead.count({
         where: {
-          stage: stage as any,
+          stage: stage as LeadStage,
           updatedAt: { gte: startDate }
         }
       });

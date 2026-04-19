@@ -701,10 +701,31 @@ export function getDeterministicTransition(args: {
   let nextState = currentState;
   let orderPatch: OrderPatch | null = null;
 
+  // INTERRUPT DETECTION: If the user says "cancel", "reset", or "help",
+  // we MUST stop the deterministic machine and let the AI handle the pivot.
+  const isInterrupt = 
+    parsed.analysis.intents.includes("cancellation") || 
+    parsed.analysis.intents.includes("restart_order_request") || 
+    parsed.analysis.intents.includes("reset_conversation") ||
+    parsed.analysis.intents.includes("human_help_request");
+
+  if (isInterrupt && currentState !== "new" && currentState !== "browsing") {
+    return {
+      handled: false,
+      nextState: currentState,
+      orderPatch: null,
+      leadTag: conversation.lead_tag || "warm",
+      lastCustomerIntent: parsed.intent,
+    };
+  }
+
   if (parsed.analysis.escalation.autoHandoff || parsed.wantsHuman) {
     handled = true;
     nextState = "human_handoff";
-  } else if (currentState === "confirmed" && parsed.isEdit) {
+  } else if (
+    currentState === "confirmed" &&
+    (parsed.isEdit || parsed.analysis.intents.includes("edit_order_request"))
+  ) {
     handled = true;
     nextState = "human_handoff";
   } else if (currentState === "confirmed" && parsed.isConfirmation) {
@@ -1021,12 +1042,17 @@ export function buildSalesReply(
   }
 
   if (state === "confirmed") {
-    // Only deterministic if it's a direct re-confirmation
-    if (parsed.isConfirmation) {
-      return buildConfirmedStateReply(parsed, rawMessage);
+    const isEditOrCancel = 
+      parsed.isEdit || 
+      parsed.analysis.intents.includes("cancellation") ||
+      parsed.analysis.intents.includes("edit_order_request") ||
+      parsed.analysis.intents.includes("human_help_request");
+
+    if (isEditOrCancel) {
+      return null; // Fallback to AI/Human for complex edits
     }
-    // Otherwise return null to let AI handle complex post-confirm queries (cancel, change, status)
-    return null;
+
+    return buildConfirmedStateReply(parsed, rawMessage);
   }
 
   if (parsed.analysis.intents.includes("payment_update")) {

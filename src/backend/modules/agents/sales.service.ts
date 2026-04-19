@@ -32,9 +32,9 @@ export class SalesAgent {
         agent: 'sales',
         summary: 'Handled price objection with value-focused positioning.',
         replyHint: personalization?.priceSensitive
-          ? 'I can suggest the most suitable option based on your budget and requirement. Tell me the size or quantity you prefer, and I will guide you.'
+          ? 'Acha question hai. Agar budget mind me hai, toh main aapko sabse sensible size suggest kar sakta hoon. Aap size ya quantity share karo, main seedha guide kar deta hoon.'
           : businessResult?.replyHint ??
-            'These are authentic GI-tagged Devgad Alphonso, naturally ripened and selected for consistency rather than mass-market pricing. If you want, I can suggest the most suitable option based on your requirement.',
+            'Sach bataun, premium Devgad Alphonso ka difference tab feel hota hai jab aroma, texture aur sweetness teenon consistent milte hain. Hum naturally ripened fruit rakhte hain, isliye taste mass-market fruit jaisa mixed nahi lagta. Agar chaho toh main aapke use ke hisab se best option suggest kar doon.',
         confidence: 0.95,
         recommendedAction: 'RECOMMEND_PRODUCT',
       };
@@ -54,8 +54,8 @@ export class SalesAgent {
         summary: 'Recommended a size using buyer context and memory.',
         replyHint:
           recommendedSize === 'Jumbo'
-            ? 'For gifting, Jumbo is usually preferred for size and presentation. If you want, I can arrange that for you.'
-            : `Large is usually the best balance of size, taste, and value. If you want, I can arrange that and guide the next step.`,
+            ? 'Sach bataun, gifting me Jumbo isliye pasand aata hai kyunki box khulte hi size aur presentation dono feel hote hain. Agar chaho toh main uske liye best quantity bhi suggest kar doon.'
+            : 'Honestly, Large most buyers ke liye safest sweet spot hota hai. Size, taste aur value teenon balanced rehte hain. Agar chaho toh main next step simple rakh deta hoon.',
         confidence: 0.96,
         recommendedAction: 'RECOMMEND_PRODUCT',
       };
@@ -65,19 +65,29 @@ export class SalesAgent {
       return {
         agent: 'sales',
         summary: 'Asked for missing quote inputs.',
-        replyHint: 'Tell me the size, quantity, and city you want, and I will prepare the current quote for you.',
+        replyHint: 'Acha question hai. Devgad Alphonso ka exact quote size, quantity aur city pe depend karta hai. Aap ye teen details bhejo, main proper quote clear tareeke se bata deta hoon.',
         confidence: 0.9,
         recommendedAction: 'COLLECT_QUANTITY_AND_CITY',
       };
     }
 
-    if (intents.includes('product_selection') || intents.includes('order_start') || intents.includes('greeting')) {
+    if (intents.includes('greeting')) {
+      return {
+        agent: 'sales',
+        summary: 'Kept the conversation exploratory instead of jumping into checkout.',
+        replyHint: 'Bilkul. Aap casual explore kar rahe ho, gifting dekh rahe ho, ya ghar ke liye best box samajhna chahte ho? Main simple tareeke se guide kar dunga.',
+        confidence: 0.84,
+        recommendedAction: context.nextAction,
+      };
+    }
+
+    if (intents.includes('product_selection') || intents.includes('order_start')) {
       return {
         agent: 'sales',
         summary: 'Guided the customer toward a concrete next step.',
         replyHint: personalization?.reorderHint
-          ? `${personalization.reorderHint} Let me know if you want the same quantity or any change.`
-          : 'Large is usually the best balance for most buyers. Tell me the quantity and city you want, and I will guide you from there.',
+          ? `${personalization.reorderHint} Aap bolo same quantity rakhni hai ya kuch change karna hai.`
+          : 'Bilkul. Most buyers Large se start karte hain kyunki taste aur value balanced rehte hain. Aap quantity aur city batao, main next step simple rakhunga.',
         confidence: 0.88,
         recommendedAction: context.nextAction,
       };
@@ -86,7 +96,7 @@ export class SalesAgent {
     return {
       agent: 'sales',
       summary: 'Provided a general sales follow-up.',
-      replyHint: 'Tell me what you need, and I will guide you clearly. If you want, I can help with pricing, a recommendation, or a fresh order.',
+      replyHint: 'Bilkul. Aap jo bhi doubt hai seedha poochho - price, quality, gifting, ya fresh order. Main honestly aur simple tareeke se guide kar dunga.',
       confidence: 0.72,
       recommendedAction: context.nextAction,
     };

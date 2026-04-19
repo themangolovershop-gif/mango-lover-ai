@@ -75,26 +75,14 @@ function formatOrderStatus(status: OrderStatus) {
   switch (status) {
     case OrderStatus.DRAFT:
       return 'in draft';
-    case OrderStatus.PENDING_DETAILS:
-      return 'awaiting details';
-    case OrderStatus.PENDING_PAYMENT:
-      return 'awaiting payment';
-    case OrderStatus.PAYMENT_UNDER_REVIEW:
-      return 'under payment review';
+    case OrderStatus.AWAITING_CONFIRMATION:
+      return 'awaiting confirmation';
     case OrderStatus.CONFIRMED:
       return 'confirmed';
-    case OrderStatus.PACKED:
-      return 'packed';
-    case OrderStatus.DISPATCHED:
-      return 'dispatched';
-    case OrderStatus.DELIVERED:
-      return 'delivered';
     case OrderStatus.CANCELLED:
       return 'cancelled';
-    case OrderStatus.ON_HOLD:
-      return 'on hold';
     default:
-      return status.toLowerCase().replace(/_/g, ' ');
+      return String(status).toLowerCase().replace(/_/g, ' ');
   }
 }
 
@@ -120,10 +108,7 @@ function formatPaymentStatus(status: PaymentStatus) {
 function isMutableOrderStatus(status: OrderStatus) {
   const mutableStatuses: OrderStatus[] = [
     OrderStatus.DRAFT,
-    OrderStatus.PENDING_DETAILS,
-    OrderStatus.PENDING_PAYMENT,
-    OrderStatus.PAYMENT_UNDER_REVIEW,
-    OrderStatus.ON_HOLD,
+    OrderStatus.AWAITING_CONFIRMATION,
   ];
 
   return mutableStatuses.includes(status);
@@ -619,7 +604,7 @@ export class ToolExecutorService {
         OR: [
           {
             status: {
-              in: [OrderStatus.CONFIRMED, OrderStatus.PACKED, OrderStatus.DISPATCHED, OrderStatus.DELIVERED],
+              in: [OrderStatus.CONFIRMED],
             },
           },
           {
@@ -699,7 +684,7 @@ export class ToolExecutorService {
         OR: [
           {
             status: {
-              in: [OrderStatus.CONFIRMED, OrderStatus.PACKED, OrderStatus.DISPATCHED, OrderStatus.DELIVERED],
+              in: [OrderStatus.CONFIRMED],
             },
           },
           {

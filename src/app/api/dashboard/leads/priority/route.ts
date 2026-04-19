@@ -24,7 +24,7 @@ export async function GET() {
     score: l.score,
     stage: l.stage,
     temperature: l.temperature,
-    priorityLevel: (l.tagsJson as any)?.priorityLevel || 4
+    priorityLevel: (l.tagsJson as { priorityLevel?: number } | null)?.priorityLevel || 4
   }));
 
   return NextResponse.json({

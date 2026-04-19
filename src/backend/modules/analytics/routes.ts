@@ -135,9 +135,6 @@ analyticsRouter.get('/', async (_request, response) => {
         status: {
           in: [
             OrderStatus.CONFIRMED,
-            OrderStatus.PACKED,
-            OrderStatus.DISPATCHED,
-            OrderStatus.DELIVERED,
           ],
         },
       },
@@ -150,9 +147,7 @@ analyticsRouter.get('/', async (_request, response) => {
         status: {
           in: [
             OrderStatus.DRAFT,
-            OrderStatus.PENDING_DETAILS,
-            OrderStatus.PENDING_PAYMENT,
-            OrderStatus.PAYMENT_UNDER_REVIEW,
+            OrderStatus.AWAITING_CONFIRMATION,
           ],
         },
       },

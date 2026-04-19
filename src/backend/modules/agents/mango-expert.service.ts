@@ -35,7 +35,7 @@ export class MangoExpertAgent {
     return {
       agent: 'mango_expert',
       summary: 'Provided a safe mango expertise fallback.',
-      replyHint: 'Our Devgad Alphonso is naturally ripened, carbide-free, and selected for aroma, sweetness, and a smoother texture. Tell me if you want guidance on quality, storage, gifting, or ripening.',
+      replyHint: 'Sach bataun, real Devgad Alphonso ko log sirf sweet nahi bolte. Uska aroma, buttery texture aur clean finish alag feel hota hai. Hamara fruit naturally ripened hota hai, isliye taste zyada honest lagta hai. Aap quality, storage, gifting ya ripening me jo poochna chaho pooch sakte ho.',
       confidence: 0.7,
     };
   }

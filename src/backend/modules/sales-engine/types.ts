@@ -1,4 +1,5 @@
-import { LeadStage, LeadTemperature, BuyerType, SalesActionType } from "@prisma/client";
+import { LeadTemperature, BuyerType, SalesActionType } from "@prisma/client";
+import type { LeadStage } from "@/backend/modules/leads/stage.service";
 
 export interface LeadIntelligence {
   leadScore: number;

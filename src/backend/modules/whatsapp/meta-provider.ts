@@ -101,7 +101,7 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
   }
 
   parseInboundPayload(payload: unknown): ParsedInboundWhatsAppMessage[] {
-    const data = payload as any; // Cast once to access nested fields safely in this context
+    const data = payload as { object: string; entry: any[] };
     if (data.object !== 'whatsapp_business_account') return [];
 
     const messages: ParsedInboundWhatsAppMessage[] = [];
@@ -112,7 +112,7 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
         if (!value || !value.messages) continue;
 
         for (const msg of value.messages) {
-          const contact = value.contacts?.find((c: any) => c.wa_id === msg.from);
+          const contact = value.contacts?.find((c: { wa_id: string }) => c.wa_id === msg.from);
           
           messages.push({
             provider: this.providerName,

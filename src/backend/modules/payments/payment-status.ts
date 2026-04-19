@@ -62,67 +62,44 @@ export function deriveOrderStatusFromPaymentStatus(
   currentOrderStatus: OrderStatus,
   paymentStatus: PaymentStatus
 ) {
-  const verifiedPreservedStatuses: OrderStatus[] = [
-    OrderStatus.PACKED,
-    OrderStatus.DISPATCHED,
-    OrderStatus.DELIVERED,
-    OrderStatus.CANCELLED,
-    OrderStatus.REFUND_REQUESTED,
-    OrderStatus.REFUNDED,
-  ];
-  const reviewableStatuses: OrderStatus[] = [
-    OrderStatus.DRAFT,
-    OrderStatus.PENDING_DETAILS,
-    OrderStatus.PENDING_PAYMENT,
-    OrderStatus.ON_HOLD,
-  ];
-  const partialStatuses: OrderStatus[] = [
-    OrderStatus.DRAFT,
-    OrderStatus.PENDING_DETAILS,
-    OrderStatus.PAYMENT_UNDER_REVIEW,
-    OrderStatus.ON_HOLD,
-  ];
-
   switch (paymentStatus) {
     case PaymentStatus.VERIFIED:
-      if (verifiedPreservedStatuses.includes(currentOrderStatus)) {
+      if (currentOrderStatus === OrderStatus.CANCELLED) {
         return currentOrderStatus;
       }
 
       return OrderStatus.CONFIRMED;
 
     case PaymentStatus.SUBMITTED:
-      if (reviewableStatuses.includes(currentOrderStatus)) {
-        return OrderStatus.PAYMENT_UNDER_REVIEW;
+      if (currentOrderStatus === OrderStatus.CONFIRMED || currentOrderStatus === OrderStatus.CANCELLED) {
+        return currentOrderStatus;
       }
 
-      return currentOrderStatus;
+      return OrderStatus.AWAITING_CONFIRMATION;
 
     case PaymentStatus.PARTIAL:
-      if (partialStatuses.includes(currentOrderStatus)) {
-        return OrderStatus.PENDING_PAYMENT;
+      if (currentOrderStatus === OrderStatus.CONFIRMED || currentOrderStatus === OrderStatus.CANCELLED) {
+        return currentOrderStatus;
       }
 
-      return currentOrderStatus;
+      return OrderStatus.AWAITING_CONFIRMATION;
 
     case PaymentStatus.FAILED:
-      if (currentOrderStatus === OrderStatus.PAYMENT_UNDER_REVIEW) {
-        return OrderStatus.PENDING_PAYMENT;
+      if (currentOrderStatus === OrderStatus.CONFIRMED || currentOrderStatus === OrderStatus.CANCELLED) {
+        return currentOrderStatus;
       }
 
-      return currentOrderStatus;
+      return OrderStatus.DRAFT;
 
     case PaymentStatus.REFUNDED:
-      return currentOrderStatus === OrderStatus.CANCELLED
-        ? OrderStatus.CANCELLED
-        : OrderStatus.REFUNDED;
+      return OrderStatus.CANCELLED;
 
     case PaymentStatus.UNPAID:
     default:
-      if (currentOrderStatus === OrderStatus.PAYMENT_UNDER_REVIEW) {
-        return OrderStatus.PENDING_PAYMENT;
+      if (currentOrderStatus === OrderStatus.CONFIRMED || currentOrderStatus === OrderStatus.CANCELLED) {
+        return currentOrderStatus;
       }
 
-      return currentOrderStatus;
+      return OrderStatus.DRAFT;
   }
 }

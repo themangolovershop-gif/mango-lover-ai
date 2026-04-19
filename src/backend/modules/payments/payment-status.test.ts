@@ -24,28 +24,28 @@ describe('payment-status', () => {
     ).toBe(PaymentStatus.PARTIAL);
   });
 
-  it('moves draft orders into payment review when payment is submitted', () => {
+  it('moves draft orders into awaiting confirmation when payment is submitted', () => {
     expect(
       deriveOrderStatusFromPaymentStatus(
         OrderStatus.DRAFT,
         PaymentStatus.SUBMITTED
       )
-    ).toBe(OrderStatus.PAYMENT_UNDER_REVIEW);
+    ).toBe(OrderStatus.AWAITING_CONFIRMATION);
   });
 
-  it('confirms unpaid workflow orders after verified payment without overwriting shipped states', () => {
+  it('confirms reviewable orders after verified payment without overwriting cancelled states', () => {
     expect(
       deriveOrderStatusFromPaymentStatus(
-        OrderStatus.PENDING_PAYMENT,
+        OrderStatus.AWAITING_CONFIRMATION,
         PaymentStatus.VERIFIED
       )
     ).toBe(OrderStatus.CONFIRMED);
 
     expect(
       deriveOrderStatusFromPaymentStatus(
-        OrderStatus.DISPATCHED,
+        OrderStatus.CANCELLED,
         PaymentStatus.VERIFIED
       )
-    ).toBe(OrderStatus.DISPATCHED);
+    ).toBe(OrderStatus.CANCELLED);
   });
 });

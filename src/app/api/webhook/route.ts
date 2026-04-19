@@ -22,6 +22,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import type { Conversation, InteractiveButton } from "@/lib/types";
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
+import { extractEntities } from "@/backend/modules/ai/entity.service";
+import type { AgentContext } from "@/backend/modules/agents/types";
 import { AGENT_VERSION } from "@/backend/shared/version";
 
 export const runtime = "nodejs";
@@ -347,7 +349,7 @@ async function handleInboundTextMessage(
       });
 
       let salesState = transition.nextState;
-      let leadTag = transition.leadTag;
+      const leadTag = transition.leadTag;
       const resetFollowUpCount = stateBefore !== salesState;
       const advancedCheckoutState =
         transition.orderPatch !== null || stateBefore !== salesState;
@@ -426,14 +428,14 @@ async function handleInboundTextMessage(
               .map((m) => m.content) || [],
             intents: parsed.analysis.intents,
             primaryIntent: parsed.analysis.primaryIntent,
-            entities: parsed.analysis.entities as any,
+            entities: extractEntities(text),
             leadStage: typedConversation.sales_state, 
-            buyerType: (typedConversation as any).lead_tag || 'personal',
+            buyerType: typedConversation.lead_tag || 'personal',
             nextAction: (transition as any).nextAction || 'NONE',
             latestOrder: await getLatestDraftOrder(typedConversation.id),
           };
 
-          const processed = await masterAgent.process(agentContext as any);
+          const processed = await masterAgent.process(agentContext as unknown as AgentContext);
           replyText = processed.responseText;
 
           // If recovery agent adjusted the state

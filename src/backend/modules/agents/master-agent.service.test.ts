@@ -183,4 +183,54 @@ describe('response-composer', () => {
     expect(response).toContain('misunderstood slightly');
     expect(response).not.toContain('prepare the current quote');
   });
+
+  it('adds a warmer advisory lead-in to pricing replies without losing the quote request', () => {
+    const composer = new ResponseComposer();
+    const context = buildContext({
+      intents: ['pricing'],
+      primaryIntent: 'pricing',
+      recentAssistantReplies: [],
+    });
+    const results: AgentResult[] = [
+      {
+        agent: 'sales',
+        summary: 'Asked for missing quote inputs.',
+        replyHint: 'Tell me the size, quantity, and city you want, and I will prepare the current quote for you.',
+        confidence: 0.9,
+      },
+    ];
+
+    const response = composer.compose(context, results);
+
+    expect(response).toContain('Acha question hai');
+    expect(response).toContain('prepare the current quote');
+  });
+
+  it('blends mango expertise with a soft next step when advisory and sales replies are both available', () => {
+    const composer = new ResponseComposer();
+    const context = buildContext({
+      intents: ['quality_check', 'pricing'],
+      primaryIntent: 'quality_check',
+      recentAssistantReplies: [],
+    });
+    const results: AgentResult[] = [
+      {
+        agent: 'mango_expert',
+        summary: 'Answered from mango knowledge.',
+        replyHint: 'Yes. Our fruit is naturally ripened, which helps preserve the aroma, texture, and eating experience.',
+        confidence: 0.98,
+      },
+      {
+        agent: 'sales',
+        summary: 'Asked for quote inputs.',
+        replyHint: 'Tell me the size, quantity, and city you want, and I will prepare the current quote for you.',
+        confidence: 0.9,
+      },
+    ];
+
+    const response = composer.compose(context, results);
+
+    expect(response).toContain('naturally ripened');
+    expect(response).toContain('prepare the current quote');
+  });
 });

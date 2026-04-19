@@ -5,6 +5,7 @@ import { ReorderEngine } from "./reorder.engine";
 import { SalesSafetyLayer } from "./safety.service";
 import { LeadIntelligence, SalesOpportunity } from "./types";
 import { logger } from "@/backend/shared/lib/logger";
+import { mapPrismaLeadStageToDerived } from "@/backend/modules/leads/stage.service";
 
 export class AutonomousSalesService {
   private prisma = getPrismaClient();
@@ -36,7 +37,7 @@ export class AutonomousSalesService {
       leadScore: lead.score,
       temperature: lead.temperature,
       buyerType: lead.buyerType,
-      stage: lead.stage,
+      stage: mapPrismaLeadStageToDerived(lead.stage),
       quantityValue: lead.orders[0]?.totalAmount ? Number(lead.orders[0].totalAmount) : 0,
       lastInteractionDays: lastMsg 
         ? (Date.now() - lastMsg.createdAt.getTime()) / (1000 * 60 * 60 * 24)
@@ -92,7 +93,7 @@ export class AutonomousSalesService {
     // Process all active leads
     const activeLeads = await this.prisma.lead.findMany({
       where: { 
-        stage: { notIn: ["CONFIRMED", "LOST", "COMPLAINT_OPEN"] },
+        stage: { notIn: ["CONFIRMED", "LOST", "HUMAN_HANDOFF"] },
         updatedAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } // Last 7 days
       }
     });

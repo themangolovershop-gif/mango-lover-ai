@@ -39,6 +39,7 @@ const TOKEN_REPLACEMENTS: Array<[RegExp, string]> = [
   [/\bchk\b/g, "check"],
   [/\bmumbi\b/g, "mumbai"],
   [/\bmumabi\b/g, "mumbai"],
+  [/\bcalcel\b/g, "cancel"],
 ];
 
 const CITY_KEYWORDS = [
@@ -132,7 +133,7 @@ const INTENT_KEYWORDS: Record<SalesIntent, string[]> = {
   repeat_order: ["again", "repeat", "same as last", "last time", "once more"],
   complaint: ["complaint", "damaged", "bad", "spoiled", "issue", "rotten", "soft"],
   refund: ["refund", "return", "replace", "money back"],
-  cancellation: ["cancel", "stop order", "don't send", "dont send"],
+  cancellation: ["cancel", "stop order", "don't send", "dont send", "calcel"],
   restart_order_request: ["start again", "reset", "restart", "start fresh", "begin again"],
   reset_conversation: ["clear my data", "forget me", "forget everything", "delete my details", "start from zero"],
   edit_order_request: ["change order", "edit order", "edit", "modify", "wrong quantity", "change address"],

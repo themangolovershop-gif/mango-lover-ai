@@ -143,7 +143,7 @@ export async function persistInboundWhatsAppMessage(
             customerId: customer.id,
             channel: ConversationChannel.WHATSAPP,
             status: ConversationStatus.OPEN,
-            currentStage: LeadStage.NEW_INQUIRY,
+            currentStage: LeadStage.NEW,
             lastInboundAt: message.receivedAt,
           },
           include: {
@@ -174,7 +174,7 @@ export async function persistInboundWhatsAppMessage(
             conversationId: conversation.id,
             source: LeadSource.WHATSAPP,
             buyerType: BuyerType.UNCERTAIN,
-            stage: LeadStage.NEW_INQUIRY,
+            stage: LeadStage.NEW,
             temperature: LeadTemperature.WARM,
           },
         }));

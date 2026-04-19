@@ -14,7 +14,7 @@ interface InboundMessage {
 
 export class OmnichannelPipeline {
   private masterAgent = new MasterAgent();
-  private prisma = getPrismaClient() as any;
+  private prisma = getPrismaClient();
 
   async process(msg: InboundMessage) {
     logger.info(`pipeline.processing.${msg.channel}`, { 
@@ -31,7 +31,7 @@ export class OmnichannelPipeline {
           { email: msg.email || "___" },
           { socialIdentities: { some: { handle: msg.socialHandle || "___" } } }
         ]
-      }
+      } as any
     });
 
     if (!customer) {

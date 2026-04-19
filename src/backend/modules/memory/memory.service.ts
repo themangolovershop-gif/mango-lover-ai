@@ -695,9 +695,6 @@ export async function syncCustomerMemoryContext(input: SyncMemoryInput): Promise
   const successfulOrders = customer.orders.filter(
     (order) =>
       order.status === 'CONFIRMED' ||
-      order.status === 'PACKED' ||
-      order.status === 'DISPATCHED' ||
-      order.status === 'DELIVERED' ||
       order.paymentStatus === PaymentStatus.VERIFIED
   );
   const preferredAddress = customer.addresses[0];

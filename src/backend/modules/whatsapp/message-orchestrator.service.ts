@@ -20,7 +20,7 @@ import { detectIntents, type IntentType } from '@/backend/modules/ai/intent.serv
 import { cancelPendingFollowUpsForConversation, scheduleFollowUp } from '@/backend/modules/followups/follow-up.service';
 import { detectBuyerType } from '@/backend/modules/leads/buyer-type.service';
 import { calculateLeadScore, getLeadTemperature } from '@/backend/modules/leads/scoring.service';
-import { determineLeadStage } from '@/backend/modules/leads/stage.service';
+import { determineLeadStage, mapPrismaLeadStageToDerived } from '@/backend/modules/leads/stage.service';
 import {
   buildPersonalizedFollowUpMessage,
   syncCustomerMemoryContext,
@@ -115,10 +115,7 @@ function getRecentAssistantReplies(messages: Message[], limit = 3) {
 function isMutableOrderStatus(status: OrderStatus) {
   const mutableStatuses: OrderStatus[] = [
     OrderStatus.DRAFT,
-    OrderStatus.PENDING_DETAILS,
-    OrderStatus.PENDING_PAYMENT,
-    OrderStatus.PAYMENT_UNDER_REVIEW,
-    OrderStatus.ON_HOLD,
+    OrderStatus.AWAITING_CONFIRMATION,
   ];
 
   return mutableStatuses.includes(status);
@@ -362,7 +359,7 @@ export async function processInboundWhatsAppMessage(
   }
 
   const leadStage = determineLeadStage({
-    currentStage: conversation.lead.stage,
+    currentStage: mapPrismaLeadStageToDerived(conversation.lead.stage),
     intents,
     entities,
     score: leadScore,

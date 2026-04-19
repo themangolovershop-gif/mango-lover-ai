@@ -12,7 +12,8 @@
     "test": "vitest",
     "prisma:generate": "prisma generate",
     "prisma:format": "prisma format",
-    "prisma:validate": "prisma validate"
+    "prisma:validate": "prisma validate",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^6.17.1",

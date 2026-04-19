@@ -46,7 +46,7 @@ export const decideNextAction = (params: NBAParams): NextAction => {
   if (wantsOrderSupport) return 'EDUCATE';
 
   // 2. Stage-based decisions
-  switch (leadStage) {
+  switch (leadStage as string) {
     case 'NEW_INQUIRY':
       if (intents.includes('greeting')) return 'GREET';
       if (hasEducationIntent) return 'EDUCATE';
