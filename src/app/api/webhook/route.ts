@@ -1,17 +1,24 @@
 import { NextRequest } from "next/server";
 import crypto from "crypto";
-import { processSmartReply } from "@/lib/smart-reply/messageProcessor";
-import { cancelPendingFollowUps } from "@/lib/followups";
-import { supabase } from "@/lib/supabase";
-import type { Conversation } from "@/lib/types";
-import { sendWhatsAppMessage } from "@/lib/whatsapp";
-import { AGENT_VERSION } from "@/backend/shared/version";
+import { ConversationStatus, MessageSender, OrderStatus, Prisma } from "@prisma/client";
+
 import { extractEntities } from "@/backend/modules/ai/entity.service";
+import { cancelPendingFollowUpsForConversation } from "@/backend/modules/followups/follow-up.service";
+import { createOrder, getLatestConversationOrder, updateOrder } from "@/backend/modules/orders/order.service";
+import { getPrismaClient } from "@/backend/shared/lib/prisma";
+import { AGENT_VERSION } from "@/backend/shared/version";
 import { normalizeMessage } from "@/backend/shared/utils/normalization";
-import { logger } from "@/backend/shared/lib/logger";
+import { getActiveProductBySize } from "@/backend/modules/products/product.service";
+import { mapSizeToProductSize } from "@/backend/modules/products/product-helpers";
+import { sendOutboundWhatsAppMessage } from "@/backend/modules/whatsapp/outbound.service";
+import type { ParsedInboundWhatsAppMessage } from "@/backend/modules/whatsapp/provider";
+import { persistInboundWhatsAppMessage } from "@/backend/modules/whatsapp/service";
+import { processSmartReply } from "@/lib/smart-reply/messageProcessor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const prisma = getPrismaClient();
 
 type WebhookTextMessage = {
   from?: string;
@@ -119,15 +126,19 @@ function getInboundMessageText(message: WebhookTextMessage): string | null {
 }
 
 async function touchConversation(conversationId: string) {
-  const { error } = await supabase
-    .from("Conversation")
-    .update({ updatedAt: new Date().toISOString() })
-    .eq("id", conversationId);
-
-  if (error) {
+  try {
+    await prisma.conversation.update({
+      where: {
+        id: conversationId,
+      },
+      data: {
+        lastInboundAt: new Date(),
+      },
+    });
+  } catch (error) {
     log.warn("Conversation timestamp update failed", {
       conversationId,
-      error: error.message,
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 }
@@ -142,22 +153,20 @@ async function logWebhook(params: {
 }) {
   try {
     // Ensure AGENT_VERSION is always part of the logged payload for observability
-    const enhancedPayload = typeof params.payload === 'object' && params.payload !== null
+    const enhancedPayload = typeof params.payload === "object" && params.payload !== null
       ? { ...params.payload, agent_version: AGENT_VERSION }
       : { raw: params.payload, agent_version: AGENT_VERSION };
 
-    const { error } = await supabase.from("webhook_logs").insert({
-      whatsapp_msg_id: params.whatsapp_msg_id || null,
-      phone: params.phone || null,
-      status: params.status,
-      payload: enhancedPayload,
-      error: params.error || null,
-      duration_ms: params.duration_ms || null,
+    await prisma.webhookLog.create({
+      data: {
+        whatsappMsgId: params.whatsapp_msg_id || null,
+        phone: params.phone || null,
+        status: params.status,
+        payload: enhancedPayload as Prisma.InputJsonValue,
+        error: params.error || null,
+        durationMs: params.duration_ms || null,
+      },
     });
-
-    if (error) {
-      log.error("Failed to persist webhook log to DB", error);
-    }
   } catch (err) {
     log.error("Internal error during webhook logging", err);
   }
@@ -167,88 +176,110 @@ async function logWebhook(params: {
  * Background worker to extract entities and update dashboard signals
  * without blocking the main reply flow.
  */
-async function processBackgroundSignals(conversationId: string, text: string) {
+async function processBackgroundSignals(args: {
+  conversationId: string;
+  customerId: string;
+  leadId: string | null;
+  text: string;
+}) {
   try {
-    const normalizedText = normalizeMessage(text);
+    const normalizedText = normalizeMessage(args.text);
     const entities = extractEntities(normalizedText);
-    
-    // 1. Update Lead Tag if strong signals found
-    const leadPatch: any = {};
-    if (entities.gifting) leadPatch.lead_tag = "gift_lead";
-    if (entities.urgency) leadPatch.lead_tag = "hot";
-    
-    if (Object.keys(leadPatch).length > 0) {
-      await supabase.from("Conversation").update(leadPatch).eq("id", conversationId);
+
+    // 1. Update conversation-level tag signals used by the dashboard.
+    if (entities.gifting || entities.urgency) {
+      await prisma.conversation.update({
+        where: {
+          id: args.conversationId,
+        },
+        data: {
+          buyerType: entities.gifting ? "gift_lead" : "hot",
+        },
+      });
     }
 
-    // 2. Update Draft Order if quantity or size found
-    if (entities.quantityDozen || entities.size) {
-      // Find latest draft/awaiting order
-      const { data: order } = await supabase
-        .from("Order")
-        .select("*")
-        .eq("conversationId", conversationId)
-        .in("status", ["draft", "awaiting_confirmation"])
-        .order("createdAt", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (order) {
-        const orderPatch: any = { updatedAt: new Date().toISOString() };
-        if (entities.quantityDozen) orderPatch.quantity = entities.quantityDozen;
-        if (entities.size) orderPatch.productSize = entities.size; // Note: Prisma uses productSize or size? 
-        if (entities.addressText && !order.deliveryAddress) orderPatch.deliveryAddress = entities.addressText;
-
-        await supabase.from("Order").update(orderPatch).eq("id", order.id);
-        log.info("Draft order freshened from background signals", { 
-          orderId: order.id, 
-          entities 
-        });
-      }
+    // 2. Update draft order line items if size/quantity signals are present.
+    if (!args.leadId || (!entities.quantityDozen && !entities.size)) {
+      return;
     }
+
+    const latestOrder = await getLatestConversationOrder(args.conversationId);
+    if (
+      latestOrder &&
+      !([OrderStatus.DRAFT, OrderStatus.AWAITING_CONFIRMATION] as OrderStatus[]).includes(latestOrder.status)
+    ) {
+      return;
+    }
+
+    const existingItem = latestOrder?.items[0];
+    const quantity = entities.quantityDozen ?? existingItem?.quantity ?? null;
+    const targetProductSize = mapSizeToProductSize(entities.size);
+    const resolvedProduct =
+      targetProductSize !== null
+        ? await getActiveProductBySize(targetProductSize)
+        : existingItem
+          ? { id: existingItem.productId }
+          : null;
+
+    if (!resolvedProduct || quantity === null) {
+      return;
+    }
+
+    if (latestOrder) {
+      await updateOrder(latestOrder.id, {
+        items: [
+          {
+            productId: resolvedProduct.id,
+            quantity,
+          },
+        ],
+      });
+
+      log.info("Draft order freshened from background signals", {
+        orderId: latestOrder.id,
+        entities,
+      });
+      return;
+    }
+
+    const createdOrder = await createOrder({
+      customerId: args.customerId,
+      conversationId: args.conversationId,
+      leadId: args.leadId,
+      items: [
+        {
+          productId: resolvedProduct.id,
+          quantity,
+        },
+      ],
+    });
+
+    log.info("Draft order created from background signals", {
+      orderId: createdOrder.id,
+      entities,
+    });
   } catch (err) {
-    log.error("Background signal processing failed", { 
-      conversationId, 
-      error: err instanceof Error ? err.message : String(err) 
+    log.error("Background signal processing failed", {
+      conversationId: args.conversationId,
+      error: err instanceof Error ? err.message : String(err),
     });
   }
 }
 
-async function getOrCreateConversation(phone: string, name: string | null) {
-  const { data: existingConversation, error: fetchConversationError } = await supabase
-    .from("Conversation")
-    .select("*")
-    .eq("phone", phone)
-    .maybeSingle();
-
-  if (fetchConversationError) {
-    throw new Error(`Conversation fetch failed: ${fetchConversationError.message}`);
-  }
-
-  if (existingConversation) {
-    return { conversation: existingConversation, created: false };
-  }
-
-  const { data: createdConversation, error: createConversationError } = await supabase
-    .from("Conversation")
-    .insert({
-      phone,
-      name,
-      sales_state: "new",
-    })
-    .select()
-    .single();
-
-  if (createConversationError) {
-    throw new Error(`Conversation create failed: ${createConversationError.message}`);
-  }
-
-  log.info("Conversation created", {
-    conversationId: createdConversation.id,
-    phone,
+async function loadConversationContext(conversationId: string) {
+  return prisma.conversation.findUnique({
+    where: {
+      id: conversationId,
+    },
+    include: {
+      customer: true,
+      lead: {
+        select: {
+          id: true,
+        },
+      },
+    },
   });
-
-  return { conversation: createdConversation, created: true };
 }
 
 async function handleInboundTextMessage(
@@ -283,186 +314,152 @@ async function handleInboundTextMessage(
     preview: text.slice(0, 80),
   });
 
-  const MAX_RETRIES = 3;
-  let attempt = 0;
-  let inboundStored = false;
+  try {
+    const inboundMessage: ParsedInboundWhatsAppMessage = {
+      provider: "meta",
+      providerMessageId: whatsappMsgId,
+      from: phone,
+      profileName: name,
+      body: text,
+      rawPayload: {
+        from: phone,
+        providerMessageId: whatsappMsgId,
+        body: text,
+      },
+      receivedAt: new Date(),
+    };
 
-  while (attempt < MAX_RETRIES) {
-    try {
-      const { conversation } = await getOrCreateConversation(phone, name);
+    const persistenceResult = await persistInboundWhatsAppMessage(inboundMessage);
 
-      if (!inboundStored) {
-        const { error: insertInboundError } = await supabase.from("Message").insert({
-          conversationId: conversation.id,
-          sentBy: "CUSTOMER",
-          rawText: text,
-          direction: "INBOUND",
-          providerMessageId: whatsappMsgId,
-        });
-
-        if (insertInboundError) {
-          if (insertInboundError.code === "23505") {
-            log.info("Duplicate inbound WhatsApp message ignored", {
-              whatsappMsgId,
-              phone,
-            });
-            return {
-              status: "duplicate",
-              conversation_id: conversation.id,
-              whatsapp_msg_id: whatsappMsgId,
-            };
-          }
-          throw new Error(`Inbound message insert failed: ${insertInboundError.message}`);
-        }
-
-        inboundStored = true;
-
-        log.info("Inbound message stored", {
-          conversationId: conversation.id,
-          whatsappMsgId,
-        });
-
-        try {
-          await cancelPendingFollowUps(conversation.id, "customer_replied");
-        } catch (err) {
-          log.warn("Failed to cancel follow-ups", { conversationId: conversation.id, error: err });
-        }
-      } else {
-        log.debug("Retrying webhook flow after optimistic lock conflict", {
-          conversationId: conversation.id,
-          whatsappMsgId,
-          attempt: attempt + 1,
-        });
-      }
-
-      if (conversation.mode === "human") {
-        try {
-          await touchConversation(conversation.id);
-        } catch (err) {
-          log.warn("Failed to touch conversation in human mode", { conversationId: conversation.id, error: err });
-        }
-        log.info("Conversation in human mode, skipping automation", {
-          conversationId: conversation.id,
-        });
-        return {
-          status: "stored_for_human",
-          conversation_id: conversation.id,
-          whatsapp_msg_id: whatsappMsgId,
-        };
-      }
-
-      const { text: replyText } = await processSmartReply(conversation.id, text);
-
-      await supabase
-        .from("Conversation")
-        .update({
-          name: (name && conversation.name !== name) ? name : undefined,
-          updatedAt: new Date().toISOString()
-        })
-        .eq("id", conversation.id);
-
-      const sendResult = await sendWhatsAppMessage(phone, replyText);
-      const outboundMsgId = sendResult?.messages?.[0]?.id || null;
-
-      if (!outboundMsgId) throw new Error("Meta send succeeded without an outbound message id.");
-
-      // Background Signal Extraction (Non-blocking but awaited for Vercel durability)
-      const elapsed = Date.now() - startedAt;
-      if (elapsed < 4000) {
-        await processBackgroundSignals(conversation.id, text);
-      } else {
-        log.warn("Skipping background extraction due to latency", { 
-          conversationId: conversation.id, 
-          elapsed 
-        });
-      }
-
-      // SIDE EFFECTS: These should NOT crash the main webhook response and trigger Meta retries
-      try {
-        const { error: insertAssistantError } = await supabase.from("Message").insert({
-          conversationId: conversation.id,
-          sentBy: "AI",
-          rawText: replyText,
-          direction: "OUTBOUND",
-          providerMessageId: outboundMsgId,
-        });
-
-        if (insertAssistantError) {
-          log.warn("Assistant message store failed, but message was sent", {
-            conversationId: conversation.id,
-            error: insertAssistantError.message
-          });
-        }
-      } catch (sideEffectError) {
-        log.warn("Webhook side-effect failed (assistant store), continuing to return 200", {
-          error: sideEffectError instanceof Error ? sideEffectError.message : String(sideEffectError)
-        });
-      }
-
-      log.info("Webhook flow completed", {
-        conversationId: conversation.id,
-        outboundMsgId,
-        durationMs: Date.now() - startedAt,
+    if (persistenceResult.status === "duplicate") {
+      log.info("Duplicate inbound WhatsApp message ignored", {
+        whatsappMsgId,
+        phone,
       });
-
-      const result: WebhookResult = {
-        status: "replied",
-        conversation_id: conversation.id,
-        outbound_meta_message_id: outboundMsgId,
+      return {
+        status: "duplicate",
+        conversation_id: persistenceResult.conversationId,
         whatsapp_msg_id: whatsappMsgId,
       };
+    }
 
-      await logWebhook({
+    if (persistenceResult.status === "ignored_empty_body") {
+      return {
+        status: "ignored_malformed_text",
         whatsapp_msg_id: whatsappMsgId,
-        phone,
-        status: result.status,
-        duration_ms: Date.now() - startedAt,
-      });
+      };
+    }
 
-      return result;
-    } catch (error) {
-      if (error instanceof Error && error.message === "VERSION_CONFLICT") {
-        attempt++;
-        log.warn("Version conflict detected, retrying optimization loop", { attempt, phone });
-        await new Promise(resolve => setTimeout(resolve, 150 * attempt));
-        continue;
+    const conversation = await loadConversationContext(persistenceResult.conversationId);
+    if (!conversation) {
+      throw new Error(`Conversation ${persistenceResult.conversationId} was not found after inbound persistence.`);
+    }
+
+    log.info("Inbound message stored", {
+      conversationId: conversation.id,
+      whatsappMsgId,
+    });
+
+    try {
+      await cancelPendingFollowUpsForConversation(conversation.id, "customer_replied");
+    } catch (err) {
+      log.warn("Failed to cancel follow-ups", {
+        conversationId: conversation.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    if (conversation.status === ConversationStatus.PENDING_HUMAN) {
+      try {
+        await touchConversation(conversation.id);
+      } catch (err) {
+        log.warn("Failed to touch conversation in human mode", {
+          conversationId: conversation.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
 
-      log.error("Critical webhook failure", {
-        whatsappMsgId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      
-      const errorStatus = "failed";
-      await logWebhook({
-        whatsapp_msg_id: whatsappMsgId,
-        phone,
-        status: errorStatus,
-        error: error instanceof Error ? error.message : String(error),
-        duration_ms: Date.now() - startedAt,
+      log.info("Conversation in human mode, skipping automation", {
+        conversationId: conversation.id,
       });
 
       return {
-        status: errorStatus,
+        status: "stored_for_human",
+        conversation_id: conversation.id,
         whatsapp_msg_id: whatsappMsgId,
-        error: error instanceof Error ? error.message : "Internal error",
       };
     }
+
+    const { text: replyText } = await processSmartReply(conversation.id, text);
+    const outboundResult = await sendOutboundWhatsAppMessage({
+      conversationId: conversation.id,
+      body: replyText,
+      sentBy: MessageSender.AI,
+      phone,
+    });
+    const outboundMsgId = outboundResult.providerMessageId;
+
+    if (!outboundMsgId) {
+      throw new Error("Meta send succeeded without an outbound message id.");
+    }
+
+    const elapsed = Date.now() - startedAt;
+    if (elapsed < 4000) {
+      await processBackgroundSignals({
+        conversationId: conversation.id,
+        customerId: conversation.customerId,
+        leadId: conversation.lead?.id ?? null,
+        text,
+      });
+    } else {
+      log.warn("Skipping background extraction due to latency", {
+        conversationId: conversation.id,
+        elapsed,
+      });
+    }
+
+    log.info("Webhook flow completed", {
+      conversationId: conversation.id,
+      outboundMsgId,
+      durationMs: Date.now() - startedAt,
+    });
+
+    const result: WebhookResult = {
+      status: "replied",
+      conversation_id: conversation.id,
+      outbound_meta_message_id: outboundMsgId,
+      whatsapp_msg_id: whatsappMsgId,
+    };
+
+    await logWebhook({
+      whatsapp_msg_id: whatsappMsgId,
+      phone,
+      status: result.status,
+      duration_ms: Date.now() - startedAt,
+    });
+
+    return result;
+  } catch (error) {
+    log.error("Critical webhook failure", {
+      whatsappMsgId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    const errorStatus = "failed";
+    await logWebhook({
+      whatsapp_msg_id: whatsappMsgId,
+      phone,
+      status: errorStatus,
+      error: error instanceof Error ? error.message : String(error),
+      duration_ms: Date.now() - startedAt,
+    });
+
+    return {
+      status: errorStatus,
+      whatsapp_msg_id: whatsappMsgId,
+      error: error instanceof Error ? error.message : "Internal error",
+    };
   }
-
-  await logWebhook({
-    whatsapp_msg_id: whatsappMsgId,
-    phone,
-    status: "failed",
-    error: "Max retries exceeded for version conflict",
-    duration_ms: Date.now() - startedAt,
-  });
-
-  return {
-    status: "failed",
-    whatsapp_msg_id: whatsappMsgId,
-    error: "Max retries exceeded for version conflict",
-  };
 }
 
 export async function GET(request: NextRequest) {
