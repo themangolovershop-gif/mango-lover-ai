@@ -16,6 +16,7 @@ import { persistInboundWhatsAppMessage } from "@/backend/modules/whatsapp/servic
 import { masterAgent } from "@/backend/modules/agents/master-agent.service";
 import { detectIntents } from "@/backend/modules/ai/intent.service";
 import { syncCustomerMemoryContext } from "@/backend/modules/memory/memory.service";
+import { decideNextAction } from "@/backend/modules/ai/nba.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -400,12 +401,35 @@ async function handleInboundTextMessage(
     const intentResult = detectIntents(text);
     const latestOrder = await getLatestConversationOrder(conversation.id);
 
+    // Fetch history for grounding
+    const history = await prisma.message.findMany({
+      where: { conversationId: conversation.id },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    });
+    const recentHistory = history
+      .reverse()
+      .map((m) => `${m.sentBy === MessageSender.CUSTOMER ? "Customer" : "Assistant"}: ${m.rawText}`)
+      .join("\n");
+    const recentAssistantReplies = history
+      .filter((m) => m.sentBy === MessageSender.AI)
+      .map((m) => m.rawText);
+
+    const leadStage = (conversation.lead?.stage as string) || "NEW_INQUIRY";
+    const nextAction = decideNextAction({
+      leadStage: leadStage as any,
+      intents: [intentResult.primaryIntent, ...intentResult.secondaryIntents],
+      entities,
+      hasOrder: !!latestOrder,
+      paymentStatus: latestOrder?.paymentStatus,
+    });
+
     const memory = await syncCustomerMemoryContext({
       customerId: conversation.customerId,
       conversationId: conversation.id,
       phone,
-      leadStage: conversation.lead?.stage ?? "COLD",
-      buyerType: conversation.buyerType,
+      leadStage,
+      buyerType: conversation.buyerType ?? "UNCERTAIN",
       intents: [intentResult.primaryIntent, ...intentResult.secondaryIntents],
       latestUserMessage: text,
       latestOrder,
@@ -414,13 +438,18 @@ async function handleInboundTextMessage(
     const agentResult = await masterAgent.process({
       conversationId: conversation.id,
       customerId: conversation.customerId,
-      leadId: conversation.lead?.id ?? null,
+      leadId: conversation.lead?.id ?? "",
+      customerName: conversation.customer.name,
       phone,
-      latestUserMessage: text,
+      latestMessage: text,
+      recentHistory,
+      recentAssistantReplies,
       intents: [intentResult.primaryIntent, ...intentResult.secondaryIntents],
+      primaryIntent: intentResult.primaryIntent,
       entities,
-      leadStage: conversation.lead?.stage ?? "COLD",
-      buyerType: conversation.buyerType,
+      leadStage,
+      buyerType: conversation.buyerType ?? "UNCERTAIN",
+      nextAction,
       latestOrder,
       memorySnapshot: memory,
       groundingSnapshot: null,
