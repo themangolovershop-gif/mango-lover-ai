@@ -118,6 +118,11 @@ ngrok http 3000
 | GET | `/api/conversations` | List all conversations |
 | PATCH | `/api/conversations/[id]` | Update conversation mode (agent/human) |
 | GET | `/api/conversations/[id]/messages` | Get messages for a conversation |
+
+## Operational Runbooks
+
+- [Live Sales FAQ Playbook](./docs/live-sales-faq-playbook.md)
+- [WhatsApp Production UAT Checklist](./docs/whatsapp-production-uat-checklist.md)
 | POST | `/api/conversations/[id]/send` | Send a manual message from the dashboard |
 
 ## Dashboard Features
