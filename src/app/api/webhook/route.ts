@@ -17,6 +17,7 @@ import { masterAgent } from "@/backend/modules/agents/master-agent.service";
 import { detectIntents } from "@/backend/modules/ai/intent.service";
 import { syncCustomerMemoryContext } from "@/backend/modules/memory/memory.service";
 import { decideNextAction } from "@/backend/modules/ai/nba.service";
+import { calculateLeadScore } from "@/backend/modules/leads/scoring.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -416,6 +417,10 @@ async function handleInboundTextMessage(
       .map((m) => m.rawText);
 
     const leadStage = (conversation.lead?.stage as string) || "NEW_INQUIRY";
+    const leadScore = calculateLeadScore(
+      [intentResult.primaryIntent, ...intentResult.secondaryIntents],
+      entities
+    );
     const nextAction = decideNextAction({
       leadStage: leadStage as any,
       intents: [intentResult.primaryIntent, ...intentResult.secondaryIntents],
@@ -427,10 +432,13 @@ async function handleInboundTextMessage(
     const memory = await syncCustomerMemoryContext({
       customerId: conversation.customerId,
       conversationId: conversation.id,
-      phone,
+      customerName: conversation.customer.name ?? undefined,
+      phone: phone || "",
       leadStage,
       buyerType: conversation.buyerType ?? "UNCERTAIN",
+      leadScore,
       intents: [intentResult.primaryIntent, ...intentResult.secondaryIntents],
+      nextAction,
       latestUserMessage: text,
       latestOrder,
     });
@@ -439,9 +447,9 @@ async function handleInboundTextMessage(
       conversationId: conversation.id,
       customerId: conversation.customerId,
       leadId: conversation.lead?.id ?? "",
-      customerName: conversation.customer.name,
-      phone,
-      latestMessage: text,
+      customerName: conversation.customer.name || "Customer",
+      phone: phone || "",
+      latestMessage: text || "",
       recentHistory,
       recentAssistantReplies,
       intents: [intentResult.primaryIntent, ...intentResult.secondaryIntents],
