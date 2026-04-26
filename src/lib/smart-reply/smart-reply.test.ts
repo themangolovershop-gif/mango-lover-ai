@@ -88,6 +88,7 @@ describe("Smart Reply AI Assistant", () => {
       ],
       latestUserMessage: "price?",
       recentAssistantReplies: [],
+      extraSystemInstruction: "Current base catalog pricing: Medium INR 1200.",
     });
 
     expect(completionCreate).toHaveBeenCalledTimes(1);
@@ -100,9 +101,15 @@ describe("Smart Reply AI Assistant", () => {
       content: SMART_REPLY_SYSTEM_PROMPT,
     });
     expect(request.messages[0].content).toContain("The Corporate Mango");
+    expect(request.messages[0].content).toContain("Marathi");
+    expect(request.messages[0].content).toContain("Gujarati");
     expect(request.messages).toContainEqual({
       role: "assistant",
       content: "Hello! How can I help?",
+    });
+    expect(request.messages).toContainEqual({
+      role: "system",
+      content: "Current base catalog pricing: Medium INR 1200.",
     });
     expect(request.messages.at(-1)).toEqual({
       role: "user",

@@ -8,9 +8,9 @@ export const BUSINESS_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     title: 'Brand Story and Legacy',
     keywords: ['brand', 'legacy', '52 year', 'family', 'story', 'website'],
     content:
-      'The Mango Lover Shop (themangolovershop.in) is a premium mango brand based in Thane, Maharashtra, built on a 52-year family fruit sourcing legacy. We focus on authentic GI-tagged Devgad Alphonso and a cleaner premium buying experience.',
+      'The Mango Lover Shop (themangolovershop.in) is a premium mango brand based in Thane, Maharashtra, built on a 52-year family fruit sourcing legacy. The current visit address is 1st Floor, The Walk, Hiranandani Estate, Thane, Mumbai. We focus on authentic GI-tagged Devgad Alphonso and a cleaner premium buying experience.',
     customerReply:
-      'The Mango Lover Shop is based in Thane, Maharashtra, and built on a 52-year family fruit sourcing legacy. You can find more about us at themangolovershop.in.',
+      'The Mango Lover Shop is based in Thane, Maharashtra, with a 52-year family fruit sourcing legacy. You can visit us at 1st Floor, The Walk, Hiranandani Estate, Thane, Mumbai, or explore more at themangolovershop.in.',
   },
   {
     id: 'business-product-promise',
@@ -52,9 +52,9 @@ export const BUSINESS_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     title: 'Perishable Logistics Caution',
     keywords: ['delivery', 'logistics', 'perishable', 'city', 'shipping', 'availability'],
     content:
-      'The brand is based in Thane, Maharashtra. Primary delivery cities are Mumbai, Thane, and Navi Mumbai. Wider service regions include all of India, but exact delivery guidance depends on the city and the current seasonal batch.',
+      'The brand is based in Thane, Maharashtra, with a visit address at 1st Floor, The Walk, Hiranandani Estate, Thane, Mumbai. Primary delivery cities are Mumbai, Thane, and Navi Mumbai. Mumbai delivery is usually targeted within 24 hours, and air courier to metro cities is usually around 2 days. The reference courier charge is INR 130 per kg, but exact delivery guidance depends on the city, quantity, and the current seasonal batch.',
     customerReply:
-      'We are based in Thane, Maharashtra, and our primary delivery cities are Mumbai, Thane, and Navi Mumbai. We also handle wider service regions, but exact delivery guidance depends on your city and the current batch.',
+      'We are based in Thane, Maharashtra, and our visit address is 1st Floor, The Walk, Hiranandani Estate, Thane, Mumbai. Mumbai delivery is usually targeted within 24 hours, and air courier to metro cities is usually around 2 days, but the exact handling still depends on your city and the current batch.',
   },
   {
     id: 'business-customer-handling',
@@ -85,9 +85,9 @@ export const BUSINESS_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     title: 'Shop Location and Pickup',
     keywords: ['location', 'address', 'shop', 'visit', 'pickup', 'where'],
     content:
-      'The brand is based in Thane, Maharashtra. We do not provide a specific street address unless operationally confirmed for a pickup or visit. Pickup should not be promised unless active.',
+      'The brand is based in Thane, Maharashtra. The current visit address is 1st Floor, The Walk, Hiranandani Estate, Thane, Mumbai. Pickup or visit timing should still be operationally confirmed before it is promised.',
     customerReply:
-      'The Mango Lover Shop is based in Thane, Maharashtra. If you need exact visit or pickup logistics, we should confirm that operationally before I promise anything specific.',
+      'The Mango Lover Shop visit address is 1st Floor, The Walk, Hiranandani Estate, Thane, Mumbai. If you want pickup or visit timing, I should confirm the operational slot before I promise it.',
   },
   {
     id: 'business-bulk-orders',

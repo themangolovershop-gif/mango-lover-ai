@@ -68,11 +68,11 @@ export function sizeLabel(size: ProductSize): string {
 export function sizePrice(size: ProductSize): number {
   switch (size) {
     case "medium":
-      return 1499;
+      return 1199;
     case "large":
-      return 1999;
+      return 1499;
     case "jumbo":
-      return 2499;
+      return 1999;
   }
 }
 
