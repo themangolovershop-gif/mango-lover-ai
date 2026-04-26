@@ -6,6 +6,9 @@ import { supabase } from "@/lib/supabase";
 import type { Conversation } from "@/lib/types";
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
 import { AGENT_VERSION } from "@/backend/shared/version";
+import { extractEntities } from "@/backend/modules/ai/entity.service";
+import { normalizeMessage } from "@/backend/shared/utils/normalization";
+import { logger } from "@/backend/shared/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -117,8 +120,8 @@ function getInboundMessageText(message: WebhookTextMessage): string | null {
 
 async function touchConversation(conversationId: string) {
   const { error } = await supabase
-    .from("conversations")
-    .update({ updated_at: new Date().toISOString() })
+    .from("Conversation")
+    .update({ updatedAt: new Date().toISOString() })
     .eq("id", conversationId);
 
   if (error) {
@@ -160,9 +163,60 @@ async function logWebhook(params: {
   }
 }
 
+/**
+ * Background worker to extract entities and update dashboard signals
+ * without blocking the main reply flow.
+ */
+async function processBackgroundSignals(conversationId: string, text: string) {
+  try {
+    const normalizedText = normalizeMessage(text);
+    const entities = extractEntities(normalizedText);
+    
+    // 1. Update Lead Tag if strong signals found
+    const leadPatch: any = {};
+    if (entities.gifting) leadPatch.lead_tag = "gift_lead";
+    if (entities.urgency) leadPatch.lead_tag = "hot";
+    
+    if (Object.keys(leadPatch).length > 0) {
+      await supabase.from("Conversation").update(leadPatch).eq("id", conversationId);
+    }
+
+    // 2. Update Draft Order if quantity or size found
+    if (entities.quantityDozen || entities.size) {
+      // Find latest draft/awaiting order
+      const { data: order } = await supabase
+        .from("Order")
+        .select("*")
+        .eq("conversationId", conversationId)
+        .in("status", ["draft", "awaiting_confirmation"])
+        .order("createdAt", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (order) {
+        const orderPatch: any = { updatedAt: new Date().toISOString() };
+        if (entities.quantityDozen) orderPatch.quantity = entities.quantityDozen;
+        if (entities.size) orderPatch.productSize = entities.size; // Note: Prisma uses productSize or size? 
+        if (entities.addressText && !order.deliveryAddress) orderPatch.deliveryAddress = entities.addressText;
+
+        await supabase.from("Order").update(orderPatch).eq("id", order.id);
+        log.info("Draft order freshened from background signals", { 
+          orderId: order.id, 
+          entities 
+        });
+      }
+    }
+  } catch (err) {
+    log.error("Background signal processing failed", { 
+      conversationId, 
+      error: err instanceof Error ? err.message : String(err) 
+    });
+  }
+}
+
 async function getOrCreateConversation(phone: string, name: string | null) {
   const { data: existingConversation, error: fetchConversationError } = await supabase
-    .from("conversations")
+    .from("Conversation")
     .select("*")
     .eq("phone", phone)
     .maybeSingle();
@@ -176,7 +230,7 @@ async function getOrCreateConversation(phone: string, name: string | null) {
   }
 
   const { data: createdConversation, error: createConversationError } = await supabase
-    .from("conversations")
+    .from("Conversation")
     .insert({
       phone,
       name,
@@ -238,11 +292,12 @@ async function handleInboundTextMessage(
       const { conversation } = await getOrCreateConversation(phone, name);
 
       if (!inboundStored) {
-        const { error: insertInboundError } = await supabase.from("messages").insert({
-          conversation_id: conversation.id,
-          role: "user",
-          content: text,
-          whatsapp_msg_id: whatsappMsgId,
+        const { error: insertInboundError } = await supabase.from("Message").insert({
+          conversationId: conversation.id,
+          sentBy: "CUSTOMER",
+          rawText: text,
+          direction: "INBOUND",
+          providerMessageId: whatsappMsgId,
         });
 
         if (insertInboundError) {
@@ -267,7 +322,11 @@ async function handleInboundTextMessage(
           whatsappMsgId,
         });
 
-        await cancelPendingFollowUps(conversation.id, "customer_replied");
+        try {
+          await cancelPendingFollowUps(conversation.id, "customer_replied");
+        } catch (err) {
+          log.warn("Failed to cancel follow-ups", { conversationId: conversation.id, error: err });
+        }
       } else {
         log.debug("Retrying webhook flow after optimistic lock conflict", {
           conversationId: conversation.id,
@@ -277,7 +336,11 @@ async function handleInboundTextMessage(
       }
 
       if (conversation.mode === "human") {
-        await touchConversation(conversation.id);
+        try {
+          await touchConversation(conversation.id);
+        } catch (err) {
+          log.warn("Failed to touch conversation in human mode", { conversationId: conversation.id, error: err });
+        }
         log.info("Conversation in human mode, skipping automation", {
           conversationId: conversation.id,
         });
@@ -291,10 +354,10 @@ async function handleInboundTextMessage(
       const { text: replyText } = await processSmartReply(conversation.id, text);
 
       await supabase
-        .from("conversations")
+        .from("Conversation")
         .update({
           name: (name && conversation.name !== name) ? name : undefined,
-          updated_at: new Date().toISOString()
+          updatedAt: new Date().toISOString()
         })
         .eq("id", conversation.id);
 
@@ -303,13 +366,25 @@ async function handleInboundTextMessage(
 
       if (!outboundMsgId) throw new Error("Meta send succeeded without an outbound message id.");
 
+      // Background Signal Extraction (Non-blocking but awaited for Vercel durability)
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 4000) {
+        await processBackgroundSignals(conversation.id, text);
+      } else {
+        log.warn("Skipping background extraction due to latency", { 
+          conversationId: conversation.id, 
+          elapsed 
+        });
+      }
+
       // SIDE EFFECTS: These should NOT crash the main webhook response and trigger Meta retries
       try {
-        const { error: insertAssistantError } = await supabase.from("messages").insert({
-          conversation_id: conversation.id,
-          role: "assistant",
-          content: replyText,
-          whatsapp_msg_id: outboundMsgId,
+        const { error: insertAssistantError } = await supabase.from("Message").insert({
+          conversationId: conversation.id,
+          sentBy: "AI",
+          rawText: replyText,
+          direction: "OUTBOUND",
+          providerMessageId: outboundMsgId,
         });
 
         if (insertAssistantError) {
@@ -476,13 +551,18 @@ export async function POST(request: NextRequest) {
 
   const failed = results.find((result) => result.status === "failed");
 
+  // If we have a failure, we still return 200 to Meta to stop retries, 
+  // UNLESS the entire system is down (which would likely have thrown a higher-level error).
   if (failed && "error" in failed) {
+    log.error("Batch processing had partial or total failure, returning 200 to prevent Meta retry loop", {
+      results
+    });
     return Response.json(
       {
-        status: "failed",
+        status: "processed_with_errors",
         results,
       },
-      { status: 500 }
+      { status: 200 } // Stop the loop
     );
   }
 

@@ -2,9 +2,12 @@ import { getPrismaClient } from "@/backend/shared/lib/prisma";
 import { getAIResponse } from "@/lib/ai";
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
 import { logger } from "@/backend/shared/lib/logger";
+import { SMART_REPLY_SYSTEM_PROMPT } from "@/lib/smart-reply/promptBuilder";
+import { SalesSafetyLayer } from "./safety.service";
 
 export class ActionExecutorService {
   private prisma = getPrismaClient();
+  private safety = new SalesSafetyLayer();
 
   async processQueue() {
     const pendingActions = await this.prisma.salesActionQueue.findMany({
@@ -34,15 +37,30 @@ export class ActionExecutorService {
           continue;
         }
 
+        // Re-check safety at send time because the customer may have replied
+        // or completed payment after this action was originally queued.
+        const safeToSend = await this.safety.isSafe(action.customerId, action.actionType);
+        if (!safeToSend) {
+          await this.prisma.salesActionQueue.update({
+            where: { id: action.id },
+            data: { status: "SKIPPED", error: "Suppressed by send-time safety check." }
+          });
+          continue;
+        }
+
         // Generate Personalized Message
         const prompt = `
+          ${SMART_REPLY_SYSTEM_PROMPT}
+
+          ## PROACTIVE TASK:
           ACTION_TYPE: ${action.actionType}
           REASON: ${action.reason}
           CONTEXT: ${JSON.stringify(action.payloadJson)}
           
           TASK:
-          Generate a short, helpful, and non-spammy proactive message to re-engage this customer.
-          Follow the brand tone: premium, warm, personal.
+          Generate a short, helpful, and premium proactive message to re-engage this customer.
+          Maintain the "Corporate Mango" storyteller voice.
+          Avoid being pushy; sound like a personal concierge checking in.
         `;
 
         const replyText = await getAIResponse([{ role: "user", content: prompt }]);

@@ -1,83 +1,71 @@
-import { Prisma } from "@prisma/client";
+import { ConversationStatus, LeadStage } from "@prisma/client";
 
 import { getPrismaClient } from "@/backend/shared/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ConversationRow = {
-  id: string;
-  name: string | null;
-  phone: string;
-  mode: "agent" | "human";
-  sales_state: string;
-  lead_tag: "hot" | "warm" | "cold" | "corporate_lead" | "gift_lead" | null;
-  updated_at: Date;
-};
-
-type MessageRow = {
-  id: string;
-  conversation_id: string;
-  role: "user" | "assistant";
-  content: string;
-  created_at: Date;
-};
+function mapLeadStageToSalesState(stage: LeadStage) {
+  switch (stage) {
+    case LeadStage.NEW:
+      return "new";
+    case LeadStage.BROWSING:
+      return "browsing";
+    case LeadStage.AWAITING_QUANTITY:
+      return "awaiting_quantity";
+    case LeadStage.AWAITING_ADDRESS:
+      return "awaiting_address";
+    case LeadStage.AWAITING_DATE:
+      return "awaiting_date";
+    case LeadStage.AWAITING_CONFIRMATION:
+      return "awaiting_confirmation";
+    case LeadStage.CONFIRMED:
+      return "confirmed";
+    case LeadStage.HUMAN_HANDOFF:
+      return "human_handoff";
+    case LeadStage.LOST:
+      return "lost";
+    default:
+      return "new";
+  }
+}
 
 export async function GET() {
   try {
     const prisma = getPrismaClient();
-    const [conversations, messages] = await Promise.all([
-      prisma.$queryRaw<ConversationRow[]>(Prisma.sql`
-        select
-          id::text,
-          name,
-          phone,
-          mode,
-          sales_state,
-          lead_tag,
-          updated_at
-        from public.conversations
-        order by updated_at desc
-      `),
-      prisma.$queryRaw<MessageRow[]>(Prisma.sql`
-        select
-          id::text,
-          conversation_id::text,
-          role,
-          content,
-          created_at
-        from public.messages
-        order by created_at asc
-      `),
-    ]);
-
-    const messagesByConversationId = messages.reduce<Record<string, MessageRow[]>>(
-      (groupedMessages, message) => {
-        const existingMessages = groupedMessages[message.conversation_id] ?? [];
-        existingMessages.push(message);
-        groupedMessages[message.conversation_id] = existingMessages;
-        return groupedMessages;
+    
+    // Use standard Prisma queries to leverage the schema.prisma source of truth
+    const conversations = await prisma.conversation.findMany({
+      include: {
+        customer: true,
+        messages: {
+          orderBy: {
+            createdAt: 'asc'
+          }
+        }
       },
-      {}
-    );
+      orderBy: {
+        updatedAt: 'desc'
+      }
+    });
 
     return Response.json(
-      conversations.map((conversation) => {
-        const nestedMessages = (messagesByConversationId[conversation.id] ?? []).map((message) => ({
-          id: message.id,
-          role: message.role,
-          content: message.content,
-          created_at: message.created_at.toISOString(),
+      conversations.map((c) => {
+        const nestedMessages = c.messages.map((m) => ({
+          id: m.id,
+          role: m.sentBy === "CUSTOMER" ? "user" : "assistant",
+          content: m.rawText,
+          created_at: m.createdAt.toISOString(),
         }));
 
         return {
-          id: conversation.id,
-          name: conversation.name,
-          phone: conversation.phone,
-          mode: conversation.mode,
-          sales_state: conversation.sales_state,
-          lead_tag: conversation.lead_tag,
-          updated_at: conversation.updated_at.toISOString(),
+          id: c.id,
+          name: c.customer.name,
+          phone: c.customer.phone,
+          mode: c.status === ConversationStatus.PENDING_HUMAN ? "human" : "agent",
+          sales_state: mapLeadStageToSalesState(c.currentStage),
+          lead_tag: c.buyerType,
+          updated_at: c.updatedAt.toISOString(),
           last_message: nestedMessages.at(-1)?.content ?? null,
           messages: nestedMessages,
         };

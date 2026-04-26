@@ -40,10 +40,10 @@ interface Message {
 
 interface RealtimeMessageRow {
   id: string;
-  conversation_id: string;
-  role: "user" | "assistant";
-  content: string;
-  created_at: string;
+  conversationId: string;
+  sentBy: "CUSTOMER" | "AI";
+  rawText: string;
+  createdAt: string;
 }
 
 interface Order {
@@ -119,14 +119,14 @@ function mergeConversationMessage(
 ) {
   const nextMessage: Message = {
     id: realtimeMessage.id,
-    role: realtimeMessage.role,
-    content: realtimeMessage.content,
-    created_at: realtimeMessage.created_at,
+    role: realtimeMessage.sentBy === "CUSTOMER" ? "user" : "assistant",
+    content: realtimeMessage.rawText,
+    created_at: realtimeMessage.createdAt,
   };
 
   return conversations
     .map((conversation) => {
-      if (conversation.id !== realtimeMessage.conversation_id) {
+      if (conversation.id !== realtimeMessage.conversationId) {
         return conversation;
       }
 
@@ -687,7 +687,7 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
         .channel("rt-dashboard-messages")
         .on(
           "postgres_changes",
-          { event: "INSERT", schema: "public", table: "messages" },
+          { event: "INSERT", schema: "public", table: "Message" },
           (payload) => {
             const newMessage = payload.new as RealtimeMessageRow;
             setConversations((current) => mergeConversationMessage(current, newMessage));
@@ -733,10 +733,10 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
     setConversations(prev =>
       mergeConversationMessage(prev, {
         id: optimistic.id,
-        conversation_id: selectedId,
-        role: optimistic.role,
-        content: optimistic.content,
-        created_at: optimistic.created_at,
+        conversationId: selectedId,
+        sentBy: optimistic.role === "user" ? "CUSTOMER" : "AI",
+        rawText: optimistic.content,
+        createdAt: optimistic.created_at,
       })
     );
     await apiFetch(`/api/conversations/${selectedId}/send`, {

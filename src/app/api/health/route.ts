@@ -13,7 +13,7 @@ export const revalidate = 0;
 export async function GET() {
   const results = await Promise.allSettled([
     // DB: ping with a minimal query
-    supabase.from("conversations").select("id", { count: "exact", head: true }),
+    supabase.from("Conversation").select("id", { count: "exact", head: true }),
     // WhatsApp: check env is populated
     Promise.resolve(
       process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID

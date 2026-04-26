@@ -576,6 +576,22 @@ model AnalyticsEvent {
   @@index([eventType])
 }
 
+model WebhookLog {
+  id            String   @id @default(uuid())
+  whatsappMsgId String?  @map("whatsapp_msg_id")
+  phone         String?
+  status        String
+  payload       Json?
+  error         String?
+  durationMs    Int?     @map("duration_ms")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([whatsappMsgId])
+  @@index([phone])
+  @@index([status])
+  @@index([createdAt])
+}
+
 model StrategyPerformance {
   id                  String              @id @default(uuid())
   strategyName        String

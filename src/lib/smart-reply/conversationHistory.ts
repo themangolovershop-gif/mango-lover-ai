@@ -1,6 +1,8 @@
 import "server-only";
 
-import { supabase } from "@/lib/supabase";
+import { MessageSender } from "@prisma/client";
+
+import { getPrismaClient } from "@/backend/shared/lib/prisma";
 
 export type MessageRole = "user" | "assistant";
 export type ChatMessage = { role: MessageRole; content: string };
@@ -13,9 +15,17 @@ function clampHistoryLimit(limit: number): number {
   return Math.min(12, Math.max(8, Math.floor(limit)));
 }
 
-function normalizeMessageRole(role: string | null | undefined): MessageRole | null {
-  if (role === "user" || role === "assistant") {
-    return role;
+function normalizeMessageRole(sentBy: MessageSender | null | undefined): MessageRole | null {
+  if (sentBy === MessageSender.CUSTOMER) {
+    return "user";
+  }
+
+  if (
+    sentBy === MessageSender.AI ||
+    sentBy === MessageSender.HUMAN ||
+    sentBy === MessageSender.SYSTEM
+  ) {
+    return "assistant";
   }
 
   return null;
@@ -39,34 +49,43 @@ export async function loadConversationHistory(
   limit = 10
 ): Promise<ChatMessage[]> {
   const historyLimit = clampHistoryLimit(limit);
-  const { data, error } = await supabase
-    .from("messages")
-    .select("role, content")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: false })
-    .limit(historyLimit);
+  const prisma = getPrismaClient();
 
-  if (error) {
+  try {
+    const data = await prisma.message.findMany({
+      where: {
+        conversationId,
+      },
+      select: {
+        sentBy: true,
+        rawText: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: historyLimit,
+    });
+
+    return data
+      .reverse()
+      .map((message) => {
+        const role = normalizeMessageRole(message.sentBy);
+        const content = normalizeMessageContent(message.rawText);
+
+        if (!role || !content) {
+          return null;
+        }
+
+        return {
+          role,
+          content,
+        } satisfies ChatMessage;
+      })
+      .filter((message): message is ChatMessage => message !== null);
+  } catch (error) {
     console.error(`[SmartReply] Conversation history load failed for ${conversationId}`, error);
     return [];
   }
-
-  return (data || [])
-    .reverse()
-    .map((message) => {
-      const role = normalizeMessageRole(message.role);
-      const content = normalizeMessageContent(message.content);
-
-      if (!role || !content) {
-        return null;
-      }
-
-      return {
-        role,
-        content,
-      } satisfies ChatMessage;
-    })
-    .filter((message): message is ChatMessage => message !== null);
 }
 
 export function getRecentAssistantReplies(

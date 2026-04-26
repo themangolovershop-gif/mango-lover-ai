@@ -3,6 +3,7 @@ import type { ChatMessage } from "./conversationHistory";
 import {
   buildSmartReplyMessages,
   SAFE_FALLBACK_REPLY,
+  SMART_REPLY_SOFT_LIMITS,
   type SmartReplyMessage,
 } from "./promptBuilder";
 import { isRepeating } from "./repeatGuard";
@@ -17,14 +18,14 @@ function normalizeReply(reply: string | null | undefined): string {
   return (reply || "").replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function trimReplyToThreeSentences(reply: string): string {
+function trimReplyToSentenceLimit(reply: string, maxSentences: number): string {
   const sentences = reply.match(/[^.!?]+[.!?]?/g)?.map((sentence) => sentence.trim()) || [];
 
   if (sentences.length === 0) {
     return reply.trim();
   }
 
-  return sentences.slice(0, 3).join(" ").trim();
+  return sentences.slice(0, maxSentences).join(" ").trim();
 }
 
 function formatReply(reply: string | null | undefined): string {
@@ -34,12 +35,20 @@ function formatReply(reply: string | null | undefined): string {
     return "";
   }
 
-  const shortenedReply = trimReplyToThreeSentences(normalizedReply);
-  if (shortenedReply.length <= 320) {
+  const shortenedReply = trimReplyToSentenceLimit(
+    normalizedReply,
+    SMART_REPLY_SOFT_LIMITS.maxSentences
+  );
+  if (shortenedReply.length <= SMART_REPLY_SOFT_LIMITS.maxCharacters) {
     return shortenedReply;
   }
 
-  return `${shortenedReply.slice(0, 317).trim()}...`;
+  const truncatedReply = shortenedReply
+    .slice(0, SMART_REPLY_SOFT_LIMITS.maxCharacters - 3)
+    .replace(/\s+\S*$/, "")
+    .trim();
+
+  return `${truncatedReply || shortenedReply.slice(0, SMART_REPLY_SOFT_LIMITS.maxCharacters - 3).trim()}...`;
 }
 
 async function requestSmartReply(messages: SmartReplyMessage[]): Promise<string | null> {
@@ -50,7 +59,7 @@ async function requestSmartReply(messages: SmartReplyMessage[]): Promise<string 
       model,
       messages,
       temperature: 0.6,
-      max_tokens: 160,
+      max_tokens: 220,
     });
 
     return normalizeReply(completion.choices[0]?.message?.content);

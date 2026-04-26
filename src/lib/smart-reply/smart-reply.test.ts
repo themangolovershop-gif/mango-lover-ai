@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateSmartReply } from "./aiReplyService";
-import { SAFE_FALLBACK_REPLY, SMART_REPLY_SYSTEM_PROMPT } from "./promptBuilder";
+import {
+  SAFE_FALLBACK_REPLY,
+  SMART_REPLY_SOFT_LIMITS,
+  SMART_REPLY_SYSTEM_PROMPT,
+} from "./promptBuilder";
 import { isRepeating } from "./repeatGuard";
 
 const { completionCreate } = vi.hoisted(() => ({
@@ -95,6 +99,7 @@ describe("Smart Reply AI Assistant", () => {
       role: "system",
       content: SMART_REPLY_SYSTEM_PROMPT,
     });
+    expect(request.messages[0].content).toContain("The Corporate Mango");
     expect(request.messages).toContainEqual({
       role: "assistant",
       content: "Hello! How can I help?",
@@ -140,7 +145,9 @@ describe("Smart Reply AI Assistant", () => {
     });
 
     expect(reply).toBe(expectedReply);
-    expect(reply.split(/[.!?]+/).filter(Boolean).length).toBeLessThanOrEqual(3);
+    expect(reply.split(/[.!?]+/).filter(Boolean).length).toBeLessThanOrEqual(
+      SMART_REPLY_SOFT_LIMITS.maxSentences
+    );
   });
 
   it("regenerates once when the first draft repeats a recent assistant reply", async () => {
@@ -192,6 +199,32 @@ describe("Smart Reply AI Assistant", () => {
     });
 
     expect(reply).toBe(SAFE_FALLBACK_REPLY);
+  });
+
+  it("allows a broader WhatsApp-safe reply budget before trimming", async () => {
+    completionCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            content:
+              "Sach bataun, price ka real difference quality mein hota hai. Devgad Alphonso ka aroma aur texture naturally richer hota hai. Hum log direct sourcing karte hain, isliye consistency better rehti hai. Large size most buyers ke liye best balance deta hai. Agar gifting hai toh Jumbo zyada premium lagta hai. Aur bhi detail chahiye toh main compare karke bata deta hoon.",
+          },
+        },
+      ],
+    });
+
+    const reply = await generateSmartReply({
+      history: [],
+      latestUserMessage: "why expensive?",
+      recentAssistantReplies: [],
+    });
+
+    expect(reply).toContain("Sach bataun");
+    expect(reply).not.toContain("Aur bhi detail chahiye");
+    expect(reply.split(/[.!?]+/).filter(Boolean).length).toBeLessThanOrEqual(
+      SMART_REPLY_SOFT_LIMITS.maxSentences
+    );
+    expect(reply.length).toBeLessThanOrEqual(SMART_REPLY_SOFT_LIMITS.maxCharacters);
   });
 
   it("flags highly similar assistant replies as repeats", () => {

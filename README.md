@@ -42,11 +42,17 @@ cp .env.example .env.local
 | `WHATSAPP_ACCESS_TOKEN` | Permanent token from Meta Business > System Users |
 | `WHATSAPP_PHONE_NUMBER_ID` | From Meta App > WhatsApp > API Setup |
 | `WHATSAPP_VERIFY_TOKEN` | Any string you choose for webhook verification |
+| `WHATSAPP_APP_SECRET` | Meta app secret used to verify webhook signatures |
+| `WHATSAPP_PROVIDER` | Set to `meta` for the live WhatsApp Cloud API flow |
 | `OPENROUTER_API_KEY` | API key from openrouter.ai |
 | `AI_MODEL` | Model ID (e.g. `anthropic/claude-sonnet-4-20250514`) |
+| `DATABASE_URL` | Prisma pooled Postgres connection string used at build and runtime |
+| `DIRECT_URL` | Prisma direct Postgres connection string |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
+| `CRON_SECRET` | Bearer token for protected cron endpoints |
+| `ADMIN_PASSWORD` | Dashboard login password for operator access |
 
 ### 3. Set up the database
 
@@ -96,14 +102,17 @@ ngrok http 3000
 ### 6. Configure the Meta webhook
 
 1. Go to [Meta App Dashboard](https://developers.facebook.com) > your app > WhatsApp > Configuration
-2. Set webhook URL to `https://your-url.com/api/webhook`
+2. Set webhook URL to `https://your-url.com/webhooks/whatsapp`
 3. Set verify token to match your `WHATSAPP_VERIFY_TOKEN`
 4. Subscribe to the **messages** field
+5. `/api/webhook` remains available as a compatibility route, but `/webhooks/whatsapp` is the preferred live endpoint
 
 ## API Routes
 
 | Method | Route | Description |
 |---|---|---|
+| GET | `/webhooks/whatsapp` | Preferred Meta webhook verification route |
+| POST | `/webhooks/whatsapp` | Preferred inbound WhatsApp webhook route |
 | GET | `/api/webhook` | Meta webhook verification |
 | POST | `/api/webhook` | Receive incoming WhatsApp messages |
 | GET | `/api/conversations` | List all conversations |
@@ -127,7 +136,27 @@ Deploy to Vercel:
 vercel
 ```
 
-Then update your Meta webhook URL to point to your Vercel deployment.
+Before promoting traffic, make sure Vercel has the full server-side env set for the target environment. At minimum, production and preview should include:
+
+- `DATABASE_URL`
+- `DIRECT_URL`
+- `WHATSAPP_PROVIDER=meta`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `OPENROUTER_API_KEY`
+- `CRON_SECRET`
+- `ADMIN_PASSWORD`
+
+Then verify the deployment with:
+
+```bash
+curl https://your-url.vercel.app/api/health
+curl -I https://your-url.vercel.app/webhooks/whatsapp
+```
+
+Expected results:
+
+- `/api/health` returns `200` with green statuses for `db`, `wa`, `ai`, and `webhook`
+- `/webhooks/whatsapp` returns `403` on a bare request, which confirms the route exists and is rejecting unsigned traffic
 
 ---
 
@@ -242,14 +271,19 @@ If using the Meta test phone number:
 2. Import the project on https://vercel.com
 3. Add all your environment variables in Vercel's project settings
 4. Deploy — Vercel will give you a production URL
-5. Go back to Meta > WhatsApp > Configuration and update the webhook URL to your Vercel URL
-6. Remove the ngrok dependency — you're live!
+5. Confirm `npm run build` and `npx tsc --noEmit` both pass
+6. Confirm `https://your-url.vercel.app/api/health` returns green statuses
+7. Confirm `https://your-url.vercel.app/webhooks/whatsapp` returns `403`, not `404`
+8. Go back to Meta > WhatsApp > Configuration and update the webhook URL to `https://your-url.vercel.app/webhooks/whatsapp`
+9. Remove the ngrok dependency — you're live!
 
 ### Troubleshooting
 
 | Problem | Solution |
 |---|---|
 | Webhook verification fails | Double-check `WHATSAPP_VERIFY_TOKEN` matches in both `.env.local` and Meta dashboard |
+| Vercel build fails with `DATABASE_URL` required | Add `DATABASE_URL` and `DIRECT_URL` to the same Vercel environment that is building the deployment, then redeploy |
+| Preview deploy builds locally but fails on Vercel | Audit preview envs separately from production; Vercel does not automatically mirror project-level secrets across targets |
 | Messages received but no AI reply | Check your `OPENROUTER_API_KEY` and `AI_MODEL` are valid |
 | Dashboard shows no conversations | Make sure you're opening the correct port (check terminal output) |
 | Duplicate replies | Meta retries if your webhook doesn't respond within 5 seconds — check server logs for slow AI responses |
