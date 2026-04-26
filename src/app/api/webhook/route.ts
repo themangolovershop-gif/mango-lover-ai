@@ -13,7 +13,9 @@ import { mapSizeToProductSize } from "@/backend/modules/products/product-helpers
 import { sendOutboundWhatsAppMessage } from "@/backend/modules/whatsapp/outbound.service";
 import type { ParsedInboundWhatsAppMessage } from "@/backend/modules/whatsapp/provider";
 import { persistInboundWhatsAppMessage } from "@/backend/modules/whatsapp/service";
-import { processSmartReply } from "@/lib/smart-reply/messageProcessor";
+import { masterAgent } from "@/backend/modules/agents/master-agent.service";
+import { detectIntents } from "@/backend/modules/ai/intent.service";
+import { syncCustomerMemoryContext } from "@/backend/modules/memory/memory.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -153,9 +155,10 @@ async function logWebhook(params: {
 }) {
   try {
     // Ensure AGENT_VERSION is always part of the logged payload for observability
-    const enhancedPayload = typeof params.payload === "object" && params.payload !== null
-      ? { ...params.payload, agent_version: AGENT_VERSION }
-      : { raw: params.payload, agent_version: AGENT_VERSION };
+    const enhancedPayload =
+      typeof params.payload === "object" && params.payload !== null
+        ? { ...params.payload, agent_version: AGENT_VERSION }
+        : { raw: params.payload ?? null, agent_version: AGENT_VERSION };
 
     await prisma.webhookLog.create({
       data: {
@@ -390,7 +393,39 @@ async function handleInboundTextMessage(
       };
     }
 
-    const { text: replyText } = await processSmartReply(conversation.id, text);
+    // Prepare context for Intelligence Engine
+    const normalizedText = normalizeMessage(text);
+    const entities = extractEntities(normalizedText);
+    const intentResult = detectIntents(text);
+    const latestOrder = await getLatestConversationOrder(conversation.id);
+
+    const memory = await syncCustomerMemoryContext({
+      customerId: conversation.customerId,
+      conversationId: conversation.id,
+      phone,
+      leadStage: conversation.lead?.stage ?? "COLD",
+      buyerType: conversation.buyerType,
+      intents: [intentResult.primaryIntent, ...intentResult.secondaryIntents],
+      latestUserMessage: text,
+      latestOrder,
+    });
+
+    const agentResult = await masterAgent.process({
+      conversationId: conversation.id,
+      customerId: conversation.customerId,
+      leadId: conversation.lead?.id ?? null,
+      phone,
+      latestUserMessage: text,
+      intents: [intentResult.primaryIntent, ...intentResult.secondaryIntents],
+      entities,
+      leadStage: conversation.lead?.stage ?? "COLD",
+      buyerType: conversation.buyerType,
+      latestOrder,
+      memorySnapshot: memory,
+      groundingSnapshot: null,
+    });
+
+    const replyText = agentResult.responseText;
     const outboundResult = await sendOutboundWhatsAppMessage({
       conversationId: conversation.id,
       body: replyText,

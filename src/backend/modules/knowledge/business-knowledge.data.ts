@@ -67,4 +67,15 @@ export const BUSINESS_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     customerReply:
       'I will keep the reply short, clear, and focused on your latest question first. If you want to edit or restart the order, I can guide that naturally.',
   },
+  {
+    id: 'business-replacement-policy',
+    domain: 'business',
+    category: 'business_policy',
+    title: 'Replacement and Quality Policy',
+    keywords: ['replacement', 'refund', 'damage', 'spoiled', 'bad mango', 'quality issue'],
+    content:
+      'If any fruit is damaged during transit or found spoiled within 24 hours of delivery, we provide a replacement or credit. As Alphonso is a natural product, we ask for a photo of the affected fruit to help us improve our sourcing and packaging.',
+    customerReply:
+      'We stand by our quality. If you find any damaged or spoiled fruit within 24 hours of delivery, just share a photo and we will arrange a replacement or credit for you.',
+  },
 ];

@@ -1,6 +1,8 @@
-import { cancelPendingFollowUps } from "@/lib/followups";
-import { supabase } from "@/lib/supabase";
-import { sendWhatsAppMessage } from "@/lib/whatsapp";
+import { MessageSender } from "@prisma/client";
+
+import { cancelPendingFollowUpsForConversation } from "@/backend/modules/followups/follow-up.service";
+import { getPrismaClient } from "@/backend/shared/lib/prisma";
+import { sendOutboundWhatsAppMessage } from "@/backend/modules/whatsapp/outbound.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,54 +20,37 @@ export async function POST(
       return Response.json({ error: "Message is required" }, { status: 400 });
     }
 
-    const { data: conversation, error: convoError } = await supabase
-      .from("conversations")
-      .select("*")
-      .eq("id", id)
-      .single();
+    const prisma = getPrismaClient();
+    const conversation = await prisma.conversation.findUnique({
+      where: {
+        id,
+      },
+      include: {
+        customer: true,
+      },
+    });
 
-    if (convoError || !conversation) {
-      console.error("[WH-ERROR] Conversation lookup failed for manual send", convoError);
+    if (!conversation) {
       return Response.json({ error: "Conversation not found" }, { status: 404 });
     }
 
-    const sendResult = await sendWhatsAppMessage(conversation.phone, message);
-    const whatsappMsgId = sendResult?.messages?.[0]?.id || null;
-
-    if (!whatsappMsgId) {
-      console.error("[WH-ERROR] Manual send missing Meta outbound id", sendResult);
-      return Response.json({ error: "Meta message id missing" }, { status: 502 });
-    }
-
-    const { error: insertError } = await supabase.from("messages").insert({
-      conversation_id: id,
-      role: "assistant",
-      content: message,
-      whatsapp_msg_id: whatsappMsgId,
+    const outbound = await sendOutboundWhatsAppMessage({
+      conversationId: id,
+      body: message,
+      sentBy: MessageSender.HUMAN,
+      phone: conversation.customer.phone,
     });
 
-    if (insertError) {
-      console.error("[WH-ERROR] Manual assistant message insert failed", insertError);
-      return Response.json({ error: insertError.message }, { status: 500 });
-    }
-
     try {
-      await cancelPendingFollowUps(id, "manual_message_sent");
+      await cancelPendingFollowUpsForConversation(id, "manual_message_sent");
     } catch (error) {
       console.warn("[WH-WARN] Pending follow-up cancellation after manual send failed", error);
     }
 
-    const { error: updateError } = await supabase
-      .from("conversations")
-      .update({ updated_at: new Date().toISOString() })
-      .eq("id", id);
-
-    if (updateError) {
-      console.error("[WH-ERROR] Manual send conversation timestamp update failed", updateError);
-      return Response.json({ error: updateError.message }, { status: 500 });
-    }
-
-    return Response.json({ success: true, whatsapp_msg_id: whatsappMsgId });
+    return Response.json({
+      success: true,
+      whatsapp_msg_id: outbound.providerMessageId,
+    });
   } catch (error) {
     console.error("[WH-ERROR] Manual send route failed", error);
     return Response.json(

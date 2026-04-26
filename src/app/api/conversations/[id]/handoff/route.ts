@@ -1,6 +1,8 @@
+import { ConversationStatus, LeadStage } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { cancelPendingFollowUps } from "@/lib/followups";
-import { supabase } from "@/lib/supabase";
+
+import { cancelPendingFollowUpsForConversation } from "@/backend/modules/followups/follow-up.service";
+import { getPrismaClient } from "@/backend/shared/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,27 +11,32 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
-
-  const { error } = await supabase
-    .from("conversations")
-    .update({
-      mode: "human",
-      sales_state: "human_handoff",
-      lead_tag: "human_required",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
   try {
-    await cancelPendingFollowUps(id, "human_handoff");
-  } catch (error) {
-    console.warn("[WH-WARN] Pending follow-up cancellation after handoff failed", error);
-  }
+    const { id } = await params;
+    const prisma = getPrismaClient();
 
-  return NextResponse.json({ success: true });
+    await prisma.conversation.update({
+      where: {
+        id,
+      },
+      data: {
+        status: ConversationStatus.PENDING_HUMAN,
+        currentStage: LeadStage.HUMAN_HANDOFF,
+        buyerType: "human_required",
+      },
+    });
+
+    try {
+      await cancelPendingFollowUpsForConversation(id, "human_handoff");
+    } catch (error) {
+      console.warn("[WH-WARN] Pending follow-up cancellation after handoff failed", error);
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to hand off conversation" },
+      { status: 500 }
+    );
+  }
 }

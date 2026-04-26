@@ -8,9 +8,9 @@ export const MANGO_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     title: 'Devgad Alphonso Overview',
     keywords: ['devgad', 'alphonso', 'premium', 'sweet', 'aroma', 'smooth'],
     content:
-      'Devgad Alphonso comes from the Devgad region of Maharashtra and is known for rich aroma, deep sweetness, saffron-colored pulp, and a smoother texture. Buyers usually prefer it when they want a more consistent premium eating experience.',
+      'Devgad Alphonso (GI Tag: AU/423/GI/139/1) comes from the Devgad region of Maharashtra. It is unique due to the local laterite soil (Chira stone) which is rich in iron and minerals, giving the fruit its signature buttery texture, saffron-colored pulp, and intense aroma. Buyers usually prefer it when they want a more consistent premium eating experience.',
     customerReply:
-      'Devgad Alphonso is known for rich aroma, sweetness, and a smoother texture. It is usually preferred by buyers looking for a more consistent premium eating experience.',
+      'Real Devgad Alphonso is GI Tagged (AU/423/GI/139/1). The secret is in the laterite soil of Devgad, which is rich in iron—this is what creates that signature buttery texture and saffron-colored pulp you won\'t find elsewhere.',
   },
   {
     id: 'mango-ratnagiri-vs-devgad',
@@ -30,9 +30,9 @@ export const MANGO_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     title: 'Natural Ripening',
     keywords: ['natural', 'ripening', 'naturally ripened', 'ripe', 'slow ripening'],
     content:
-      'Natural ripening allows the fruit to mature gradually, which helps develop better aroma, taste, and texture. It supports a cleaner premium experience compared with harsh artificial ripening shortcuts.',
+      'Natural ripening in wooden crates (Petis) packed with grass allows the fruit to mature gradually over 7-10 days. This slow process is essential for the development of the complex esters that create the authentic Alphonso aroma and texture, avoiding the flat taste and potential health risks of artificial ripening.',
     customerReply:
-      'Yes. Our fruit is naturally ripened, which helps preserve the aroma, texture, and overall eating experience. It develops more gradually than artificially ripened fruit.',
+      'Our mangoes are naturally ripened in grass-packed wooden crates over 7-10 days. This slow process is essential—it\'s what allows the complex sweetness and aroma to develop fully, something you just can\'t get with chemical ripening.',
   },
   {
     id: 'mango-carbide-free',

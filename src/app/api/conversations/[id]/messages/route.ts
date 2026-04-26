@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { supabase } from "@/lib/supabase";
+
+import { getPrismaClient } from "@/backend/shared/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,17 +9,32 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  try {
+    const { id } = await params;
+    const prisma = getPrismaClient();
+    const messages = await prisma.message.findMany({
+      where: {
+        conversationId: id,
+      },
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
 
-  const { data: messages, error } = await supabase
-    .from("messages")
-    .select("*")
-    .eq("conversation_id", id)
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json(
+      messages.map((message) => ({
+        id: message.id,
+        conversation_id: message.conversationId,
+        role: message.sentBy === "CUSTOMER" ? "user" : "assistant",
+        content: message.rawText,
+        whatsapp_msg_id: message.providerMessageId,
+        created_at: message.createdAt.toISOString(),
+      }))
+    );
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Unable to load messages" },
+      { status: 500 }
+    );
   }
-
-  return Response.json(messages || []);
 }
