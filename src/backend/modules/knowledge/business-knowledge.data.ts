@@ -8,9 +8,9 @@ export const BUSINESS_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     title: 'Brand Story and Legacy',
     keywords: ['brand', 'legacy', '52 year', 'family', 'story', 'website'],
     content:
-      'The Mango Lover Shop is a premium mango brand built on a 52-year family fruit sourcing legacy. The brand focuses on trusted Devgad Alphonso sourcing and a cleaner premium buying experience.',
+      'The Mango Lover Shop (themangolovershop.in) is a premium mango brand based in Thane, Maharashtra, built on a 52-year family fruit sourcing legacy. We focus on authentic GI-tagged Devgad Alphonso and a cleaner premium buying experience.',
     customerReply:
-      'The Mango Lover Shop is built on a 52-year family fruit sourcing legacy. We focus on trusted Devgad Alphonso sourcing and a cleaner premium buying experience.',
+      'The Mango Lover Shop is based in Thane, Maharashtra, and built on a 52-year family fruit sourcing legacy. You can find more about us at themangolovershop.in.',
   },
   {
     id: 'business-product-promise',
@@ -41,9 +41,9 @@ export const BUSINESS_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     title: 'Payment Handling Guidance',
     keywords: ['payment', 'upi', 'reference', 'screenshot', 'payment instructions'],
     content:
-      'Payment should be treated as a tracked operational step, with status taken from the order and payment records rather than guesswork. If payment is pending, the system should guide clearly without repeating the same reminder mechanically.',
+      'Payment is handled via manual UPI transfer. Once the payment is made, the customer must share a screenshot or transaction reference number for verification.',
     customerReply:
-      'I can check the current payment status from your order and guide you accordingly. If anything needs updating, I will keep the next step clear.',
+      'Perfect. Please share the payment reference or screenshot here, and I will guide the next step clearly.',
   },
   {
     id: 'business-logistics-caution',
@@ -52,9 +52,9 @@ export const BUSINESS_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     title: 'Perishable Logistics Caution',
     keywords: ['delivery', 'logistics', 'perishable', 'city', 'shipping', 'availability'],
     content:
-      'Because the fruit is perishable, city handling and logistics should be treated carefully. Delivery guidance should follow configured rules and actual availability instead of assumptions.',
+      'The brand is based in Thane, Maharashtra. Primary delivery cities are Mumbai, Thane, and Navi Mumbai. Wider service regions include all of India, but exact delivery guidance depends on the city and the current seasonal batch.',
     customerReply:
-      'Because the fruit is perishable, delivery handling depends on the configured city and logistics rules. I can check the current delivery guidance for your city.',
+      'We are based in Thane, Maharashtra, and our primary delivery cities are Mumbai, Thane, and Navi Mumbai. We also handle wider service regions, but exact delivery guidance depends on your city and the current batch.',
   },
   {
     id: 'business-customer-handling',
@@ -77,5 +77,38 @@ export const BUSINESS_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
       'If any fruit is damaged during transit or found spoiled within 24 hours of delivery, we provide a replacement or credit. As Alphonso is a natural product, we ask for a photo of the affected fruit to help us improve our sourcing and packaging.',
     customerReply:
       'We stand by our quality. If you find any damaged or spoiled fruit within 24 hours of delivery, just share a photo and we will arrange a replacement or credit for you.',
+  },
+  {
+    id: 'business-shop-location',
+    domain: 'business',
+    category: 'business_policy',
+    title: 'Shop Location and Pickup',
+    keywords: ['location', 'address', 'shop', 'visit', 'pickup', 'where'],
+    content:
+      'The brand is based in Thane, Maharashtra. We do not provide a specific street address unless operationally confirmed for a pickup or visit. Pickup should not be promised unless active.',
+    customerReply:
+      'The Mango Lover Shop is based in Thane, Maharashtra. If you need exact visit or pickup logistics, we should confirm that operationally before I promise anything specific.',
+  },
+  {
+    id: 'business-bulk-orders',
+    domain: 'business',
+    category: 'business_policy',
+    title: 'Bulk and Wedding Orders',
+    keywords: ['bulk', 'wedding', 'corporate', 'wholesale', 'large quantity'],
+    content:
+      'Bulk orders for weddings or corporate gifting are supported. The customer should provide size, quantity, and delivery city for a custom quote and batch logistics.',
+    customerReply:
+      'Yes, we can handle bulk requirements. For something like weddings or corporate gifting, the cleanest next step is size, quantity, and delivery city so we can guide the right batch and logistics.',
+  },
+  {
+    id: 'business-how-to-order',
+    domain: 'business',
+    category: 'business_policy',
+    title: 'How to Place Order',
+    keywords: ['order', 'place order', 'how to', 'steps'],
+    content:
+      'Ordering follows a step-by-step flow: size, quantity, delivery address, delivery date, and payment confirmation.',
+    customerReply:
+      'Once you are ready, I will guide you step by step. Usually the clean flow is size, quantity, delivery address, delivery date, and then payment confirmation.',
   },
 ];

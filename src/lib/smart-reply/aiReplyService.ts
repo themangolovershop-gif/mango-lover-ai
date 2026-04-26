@@ -12,6 +12,7 @@ type GenerateSmartReplyArgs = {
   history: ChatMessage[];
   latestUserMessage: string;
   recentAssistantReplies: string[];
+  extraSystemInstruction?: string;
 };
 
 function normalizeReply(reply: string | null | undefined): string {
@@ -75,6 +76,7 @@ export async function generateSmartReply(
   const baseMessages = buildSmartReplyMessages({
     history: args.history,
     latestUserMessage: args.latestUserMessage,
+    extraSystemInstruction: args.extraSystemInstruction,
   });
   const firstDraft = formatReply(await requestSmartReply(baseMessages));
 

@@ -8,9 +8,9 @@ export const MANGO_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     title: 'Devgad Alphonso Overview',
     keywords: ['devgad', 'alphonso', 'premium', 'sweet', 'aroma', 'smooth'],
     content:
-      'Devgad Alphonso (GI Tag: AU/423/GI/139/1) comes from the Devgad region of Maharashtra. It is unique due to the local laterite soil (Chira stone) which is rich in iron and minerals, giving the fruit its signature buttery texture, saffron-colored pulp, and intense aroma. Buyers usually prefer it when they want a more consistent premium eating experience.',
+      'Devgad Alphonso (GI Tag: AU/423/GI/139/1) comes from the Devgad region of Maharashtra. It is unique due to the local laterite soil (Chira stone) which is rich in iron and minerals, giving the fruit its signature buttery texture, saffron-colored pulp, and intense aroma. The Mango Lover Shop brings a 52-year family sourcing background to ensure only authentic batches reach the customer.',
     customerReply:
-      'Real Devgad Alphonso is GI Tagged (AU/423/GI/139/1). The secret is in the laterite soil of Devgad, which is rich in iron—this is what creates that signature buttery texture and saffron-colored pulp you won\'t find elsewhere.',
+      'Acha question hai. We focus only on GI-tagged Devgad Alphonso, not mixed-origin fruit. The difference usually shows up in the aroma, buttery texture, and consistency, and that comes from both the region and our 52-year family sourcing background.',
   },
   {
     id: 'mango-ratnagiri-vs-devgad',
@@ -32,7 +32,7 @@ export const MANGO_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     content:
       'Natural ripening in wooden crates (Petis) packed with grass allows the fruit to mature gradually over 7-10 days. This slow process is essential for the development of the complex esters that create the authentic Alphonso aroma and texture, avoiding the flat taste and potential health risks of artificial ripening.',
     customerReply:
-      'Our mangoes are naturally ripened in grass-packed wooden crates over 7-10 days. This slow process is essential—it\'s what allows the complex sweetness and aroma to develop fully, something you just can\'t get with chemical ripening.',
+      'Yes, naturally ripened and carbide-free. Sach bataun, that slow ripening is what gives Alphonso its clean aroma and buttery texture instead of that flat artificial taste.',
   },
   {
     id: 'mango-carbide-free',
@@ -76,7 +76,7 @@ export const MANGO_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     content:
       'Medium works well for smaller households or budget-conscious buyers. Large is usually the best balance of size, taste, and value, while Jumbo is preferred when presentation and gifting matter most.',
     customerReply:
-      'Large is usually the best balance of size, taste, and value. Medium works well for smaller households, while Jumbo is preferred when presentation matters more.',
+      'Large is usually the sweet spot for most buyers because it balances size, taste, and value well. Medium works for smaller households, and Jumbo is usually preferred when gifting or presentation matters more.',
   },
   {
     id: 'mango-gifting-guide',
@@ -99,5 +99,16 @@ export const MANGO_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
       'Alphonso is seasonal, and quality can vary by batch through the season. Premium batches usually move quickly, which is why availability should be treated as limited rather than mass-supply.',
     customerReply:
       'Alphonso is seasonal, so quality and availability move by batch rather than mass supply. Premium batches can move quickly during the season.',
+  },
+  {
+    id: 'mango-why-expensive',
+    domain: 'mango',
+    category: 'quality',
+    title: 'Why Premium Pricing?',
+    keywords: ['expensive', 'costly', 'price high', 'why so much', 'discount'],
+    content:
+      'Premium Devgad Alphonso is positioned around curated quality, natural ripening, and consistency rather than bargain fruit. The cost reflects the sourcing difficulty, authentic origin, and zero-chemical ripening risk.',
+    customerReply:
+      'Honestly, ye sabse common question hai. We are positioned around curated Devgad quality, natural ripening, and consistency rather than bargain fruit, so buyers usually choose us for a more premium and reliable eating experience.',
   },
 ];

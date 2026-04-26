@@ -18,6 +18,7 @@ import { detectIntents } from "@/backend/modules/ai/intent.service";
 import { syncCustomerMemoryContext } from "@/backend/modules/memory/memory.service";
 import { decideNextAction } from "@/backend/modules/ai/nba.service";
 import { calculateLeadScore } from "@/backend/modules/leads/scoring.service";
+import { responseGroundingService } from "@/backend/modules/ai/response-grounding.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -439,8 +440,25 @@ async function handleInboundTextMessage(
       leadScore,
       intents: [intentResult.primaryIntent, ...intentResult.secondaryIntents],
       nextAction,
-      latestUserMessage: text,
+      latestUserMessage: text || "",
       latestOrder,
+    });
+
+    // 4. Knowledge Grounding
+    const grounding = await responseGroundingService.buildGroundingContext({
+      customerId: conversation.customerId,
+      conversationId: conversation.id,
+      leadId: conversation.lead?.id ?? "",
+      phone: phone || "",
+      leadStage,
+      buyerType: conversation.buyerType ?? "UNCERTAIN",
+      nextAction,
+      intents: [intentResult.primaryIntent, ...intentResult.secondaryIntents],
+      entities,
+      latestUserMessage: text || "",
+      latestOrder,
+      paymentStatus: latestOrder?.paymentStatus ?? "UNPAID",
+      memorySnapshot: memory,
     });
 
     const agentResult = await masterAgent.process({
@@ -460,7 +478,7 @@ async function handleInboundTextMessage(
       nextAction,
       latestOrder,
       memorySnapshot: memory,
-      groundingSnapshot: null,
+      groundingSnapshot: grounding,
     });
 
     const replyText = agentResult.responseText;
