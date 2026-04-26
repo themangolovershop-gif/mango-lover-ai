@@ -279,6 +279,7 @@ async function loadConversationContext(conversationId: string) {
       lead: {
         select: {
           id: true,
+          stage: true,
         },
       },
     },
