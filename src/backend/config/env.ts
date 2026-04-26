@@ -23,7 +23,7 @@ const envSchema = z
     AI_REQUEST_TIMEOUT_MS: positiveInteger(15_000),
     AI_MAX_RETRIES: positiveInteger(3),
     AI_RETRY_BASE_DELAY_MS: nonNegativeInteger(500),
-    WHATSAPP_PROVIDER: z.enum(['twilio', 'meta']).default('twilio'),
+    WHATSAPP_PROVIDER: z.enum(['twilio', 'meta']).default('meta'),
     TWILIO_ACCOUNT_SID: z.string().optional(),
     TWILIO_AUTH_TOKEN: z.string().optional(),
     TWILIO_WHATSAPP_NUMBER: z.string().optional(),
@@ -90,9 +90,13 @@ const envSchema = z
     }
   });
 
-const _env = envSchema.safeParse(process.env);
+const isBuildStep = process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL;
 
-if (!_env.success) {
+const _env = isBuildStep 
+  ? envSchema.safeParse(process.env) // Still parse to get defaults
+  : envSchema.safeParse(process.env);
+
+if (!_env.success && !isBuildStep) {
   console.error(
     'Invalid environment variables:',
     JSON.stringify(_env.error.format(), null, 2)
@@ -100,4 +104,4 @@ if (!_env.success) {
   process.exit(1);
 }
 
-export const env = _env.data;
+export const env = _env.data || ({} as any);
