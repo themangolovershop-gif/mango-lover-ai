@@ -16,7 +16,7 @@ const envSchema = z
   .object({
     PORT: z.string().default('3001').transform(Number),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-    DATABASE_URL: z.string().url(),
+    DATABASE_URL: z.string().url().optional().or(z.string().length(0)).default(''),
     OPENAI_API_KEY: z.string().optional(),
     OPENROUTER_API_KEY: z.string().optional(),
     AI_MODEL: z.string().default('openai/gpt-4o-mini'),
