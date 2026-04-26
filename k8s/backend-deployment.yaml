@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whatsapp-backend
+  labels:
+    app: whatsapp-agent
+    component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: whatsapp-agent
+      component: backend
+  template:
+    metadata:
+      labels:
+        app: whatsapp-agent
+        component: backend
+    spec:
+      containers:
+        - name: backend
+          image: whatsapp-agent-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: whatsapp-agent-config
+            - secretRef:
+                name: whatsapp-agent-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

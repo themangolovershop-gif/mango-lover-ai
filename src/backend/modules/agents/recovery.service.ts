@@ -41,8 +41,8 @@ export class RecoveryAgent {
         summary: 'Resetting the conversation or draft order.',
         replyHint:
           intents.includes('reset_conversation')
-            ? 'I have cleared our current session details. We are starting fresh—how can I help you today?'
-            : restartResult?.replyHint ?? 'Understood. We can start fresh. Tell me the size and quantity you want, and I will guide you.',
+            ? "I've cleared our session. We're starting completely fresh - how can I assist you now?"
+            : restartResult?.replyHint ?? "Understood. Let's begin fresh. Tell me the size and quantity you're looking for, and I'll guide you.",
         confidence: 1,
         recommendedAction: 'COLLECT_QUANTITY_AND_CITY',
       };
@@ -58,7 +58,7 @@ export class RecoveryAgent {
         summary: 'Escalating to human support.',
         replyHint:
           escalationResult?.replyHint ??
-          'I am moving this to a human team member so it is handled properly. Please give us a moment.',
+          "I'm escalating this to our human team immediately to ensure it gets the attention it deserves. Please bear with us for a moment.",
         confidence: 1,
         recommendedAction: 'ESCALATE_HUMAN',
       };
@@ -69,8 +69,8 @@ export class RecoveryAgent {
         agent: 'recovery',
         summary: 'Breaking a stuck conversational loop.',
         replyHint: context.latestOrder
-          ? 'I may be narrowing this too much. Would you like to continue the current order, change it, or start fresh?'
-          : 'I may have misunderstood slightly. Would you like pricing, a recommendation, or to start an order?',
+          ? "Let me get this right - would you like to continue with your current order, make a change, or should we start fresh?"
+          : "I want to make sure I'm helping you the right way. Would you prefer a recommendation, a quote, or to start a fresh order?",
         confidence: 0.94,
         recommendedAction: context.nextAction,
       };
@@ -79,9 +79,11 @@ export class RecoveryAgent {
     return {
       agent: 'recovery',
       summary: 'Provided general recovery guidance.',
-      replyHint: 'I am here to help. Tell me if you want to continue the order, change something, or start fresh.',
+      replyHint: "I'm here to guide you. Just tell me if you'd like to continue, make a change, or start fresh.",
       confidence: 0.72,
       recommendedAction: context.nextAction,
     };
+
+
   }
 }

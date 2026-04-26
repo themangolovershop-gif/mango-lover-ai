@@ -7,6 +7,7 @@ declare global {
 
 export function getPrismaClient() {
   if (!globalThis.__mangoPrisma__) {
+    console.log('DEBUG: Initializing Prisma with DATABASE_URL:', process.env.DATABASE_URL ? (process.env.DATABASE_URL.includes('@') ? '***@' + process.env.DATABASE_URL.split('@')[1] : process.env.DATABASE_URL) : 'NOT SET');
     globalThis.__mangoPrisma__ = new PrismaClient();
   }
 

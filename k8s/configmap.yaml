@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: whatsapp-agent-config
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  BACKEND_PORT: "3001"
+  # Add other non-sensitive environment variables here

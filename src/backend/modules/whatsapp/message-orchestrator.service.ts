@@ -95,7 +95,9 @@ function getLastAssistantReply(messages: Message[]) {
   const latestAssistant = [...messages]
     .reverse()
     .find(
-      (message) => message.direction === 'OUTBOUND' && message.sentBy === MessageSender.AI
+      (message) =>
+        message.direction === 'OUTBOUND' &&
+        (message.sentBy === MessageSender.AI || message.sentBy === MessageSender.SYSTEM)
     );
 
   return latestAssistant?.rawText ?? undefined;
@@ -110,6 +112,35 @@ function getRecentAssistantReplies(messages: Message[], limit = 3) {
     )
     .slice(-limit)
     .map((message) => message.rawText);
+}
+
+function titleCase(value: string) {
+  return value
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function buildOrderContext(order: ConversationOrder | null, city?: string | null) {
+  if (!order) {
+    return undefined;
+  }
+
+  const firstItem = order.items[0];
+  const size = firstItem?.product?.size ? titleCase(firstItem.product.size) : undefined;
+
+  return {
+    draftOrderExists:
+      order.status === OrderStatus.DRAFT || order.status === OrderStatus.AWAITING_CONFIRMATION,
+    product: size ? `${size} Devgad Alphonso` : undefined,
+    quantityDozen: firstItem?.quantity,
+    deliveryCity: city ?? undefined,
+    orderStatus: order.status,
+    paymentStatus: order.paymentStatus,
+    totalAmount: Number(order.totalAmount.toString()),
+    currency: order.currency,
+  };
 }
 
 function isMutableOrderStatus(status: OrderStatus) {
@@ -586,11 +617,13 @@ export async function processInboundWhatsAppMessage(
     customerName: conversation.customer.name,
     phone: conversation.customer.phone,
     leadStage,
+    leadScore,
     buyerType,
     intents,
     entities,
     nextAction,
     orderSummary: buildOrderSummary(latestOrder),
+    orderContext: buildOrderContext(latestOrder, conversation.customer.city),
     latestUserMessage,
     lastAssistantReply,
     recentAssistantReplies,

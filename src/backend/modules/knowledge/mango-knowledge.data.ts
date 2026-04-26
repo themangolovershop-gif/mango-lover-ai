@@ -41,7 +41,7 @@ export const MANGO_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     title: 'Carbide-Free Quality',
     keywords: ['carbide', 'carbide-free', 'chemical', 'safe', 'artificial'],
     content:
-      'Carbide-free means the fruit is not forced to ripen using harsh chemicals. This is safer and also helps preserve the fruit’s natural aroma, taste, and texture.',
+      'Carbide-free means the fruit is not forced to ripen using harsh chemicals. This is safer and also helps preserve the fruit\'s natural aroma, taste, and texture.',
     customerReply:
       'Our fruit is strictly carbide-free. That means it is not forced to ripen using harsh chemicals, which helps preserve a cleaner and more natural eating experience.',
   },

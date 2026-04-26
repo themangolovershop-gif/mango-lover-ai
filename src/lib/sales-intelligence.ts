@@ -124,7 +124,7 @@ const INTENT_KEYWORDS: Record<SalesIntent, string[]> = {
   order_start: ["book", "reserve", "order", "want", "need", "1 box", "2 box"],
   address_submission: ["address", "pincode", "pin", "apartment", "flat", "building", "tower"],
   payment_update: ["payment", "paid", "upi", "utr", "reference", "screenshot", "transaction"],
-  order_confirmation_request: ["confirm", "final", "lock", "done order"],
+  order_confirmation_request: ["confirm", "final", "lock", "done order", "yes", "ok", "okay", "yep", "haan", "proceed", "go ahead", "all good", "perfect"],
   discount_request: ["discount", "offer", "best rate", "less price"],
   objection_price: ["expensive", "costly", "market me sasta", "cheaper", "sasta"],
   gifting: ["gift", "gifting", "hamper"],

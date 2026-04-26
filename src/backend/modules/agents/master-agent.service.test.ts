@@ -202,7 +202,7 @@ describe('response-composer', () => {
 
     const response = composer.compose(context, results);
 
-    expect(response).toContain('Acha question hai');
+    expect(response).toContain('That is a great question');
     expect(response).toContain('prepare the current quote');
   });
 

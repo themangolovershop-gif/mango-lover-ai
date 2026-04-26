@@ -1,7 +1,7 @@
-import { AIReplyContext } from './provider';
+import type { AIReplyContext } from './provider';
 import { aiProvider } from './openrouter.provider';
+import { appendDeveloperMessage, buildSalesMessages } from './prompt-builder';
 import { DETERMINISTIC_TEMPLATES } from './templates';
-import { buildSalesPrompt } from './prompt-builder';
 
 function normalizeReplyForComparison(text?: string | null) {
   return (text || '')
@@ -19,12 +19,39 @@ function isTooSimilar(candidate: string, previous?: string) {
     return false;
   }
 
-  return (
-    normalizedCandidate === normalizedPrevious ||
-    normalizedCandidate.includes(normalizedPrevious) ||
-    normalizedPrevious.includes(normalizedCandidate)
-  );
+  // 1. Exact match
+  if (normalizedCandidate === normalizedPrevious) {
+    return true;
+  }
+
+  // 2. Inclusion check only for very similar length messages
+  if (
+    normalizedCandidate.length >= 20 &&
+    normalizedPrevious.length >= 20 &&
+    Math.abs(normalizedCandidate.length - normalizedPrevious.length) < 10
+  ) {
+    if (normalizedCandidate.includes(normalizedPrevious) || normalizedPrevious.includes(normalizedCandidate)) {
+      return true;
+    }
+  }
+
+  // 2. Fuzzy word overlap (e.g., if 80% of words are the same)
+  const wordsCandidate = new Set(normalizedCandidate.split(' '));
+  const wordsPrevious = new Set(normalizedPrevious.split(' '));
+  
+  if (wordsCandidate.size === 0 || wordsPrevious.size === 0) return false;
+
+  let intersectionCount = 0;
+  for (const word of wordsCandidate) {
+    if (wordsPrevious.has(word)) {
+      intersectionCount++;
+    }
+  }
+
+  const overlap = intersectionCount / Math.max(wordsCandidate.size, wordsPrevious.size);
+  return overlap > 0.85; // 85% word overlap is considered too similar
 }
+
 
 function isTooSimilarToRecent(candidate: string, previousReplies?: string[]) {
   if (!previousReplies || previousReplies.length === 0) {
@@ -61,15 +88,15 @@ function buildLoopBreakerReply(context: AIReplyContext) {
   }
 
   if (context.intents.includes('restart_order_request') || context.intents.includes('cancellation')) {
-    return 'Understood. We can start fresh. Tell me the size and quantity you want, and I will guide you.';
+    return "Understood. Let's begin fresh. Tell me the size and quantity you need, and I'll guide you.";
   }
 
   if (context.intents.includes('order_summary_request') && context.orderSummary) {
-    return `${context.orderSummary} Tell me if you want to confirm it or change anything.`;
+    return `You currently have ${context.orderSummary}. I can help you confirm it or make any changes.`;
   }
 
   if (context.intents.includes('edit_order_request')) {
-    return 'Tell me the exact change you want in the current order, and I will guide the update.';
+    return "Just tell me what you'd like to change in the order, and I'll update it for you immediately.";
   }
 
   const reorderFallback = buildReorderFallback(context);
@@ -79,16 +106,16 @@ function buildLoopBreakerReply(context: AIReplyContext) {
   }
 
   if (context.personalization?.priceSensitive) {
-    return 'I can suggest the most suitable option based on your budget and requirement. Tell me the size or quantity you prefer.';
+    return 'I can suggest the best option for your budget. Tell me the size or quantity you prefer.';
   }
 
-  return 'I may have misunderstood slightly. Would you like to continue the current order or start fresh?';
+  return 'Let me confirm: would you like to continue your current order or start fresh?';
 }
 
 export class AIReplyService {
   /**
    * Generates a premium, context-aware reply for the customer.
-   * Priority: 
+   * Priority:
    * 1. Deterministic template (for critical/legal/exact flows)
    * 2. AI model (for general inquiry/education/conversation)
    */
@@ -108,9 +135,11 @@ export class AIReplyService {
       'edit_order_request',
       'restart_order_request',
       'cancellation',
+      'greeting',
+      'gratitude',
+      'unknown',
     ]);
 
-    // 1. Check for deterministic template first (only for critical/late stages)
     const criticalActions = ['REQUEST_PAYMENT', 'CONFIRM_ORDER', 'ESCALATE_HUMAN', 'HANDLE_COMPLAINT'];
     const template = DETERMINISTIC_TEMPLATES[nextAction];
     const shouldPreferModel = context.intents.some((intent) => modelPreferredIntents.has(intent));
@@ -123,7 +152,7 @@ export class AIReplyService {
     ) {
       return groundedReplyHint;
     }
-    
+
     if (template && criticalActions.includes(nextAction) && !shouldPreferModel) {
       console.log(`[AI] Using deterministic template for action: ${nextAction}`);
       const deterministicReply = sanitizeReply(template(context));
@@ -135,38 +164,50 @@ export class AIReplyService {
         return deterministicReply;
       }
 
-      console.log(`[AI] Deterministic reply too similar to previous reply, switching to model path`);
+      console.log('[AI] Deterministic reply too similar to previous reply, switching to model path');
     }
 
-    // 2. Otherwise, fall back to AI generation
     console.log(`[AI] Generating model response for action: ${nextAction}`);
-    const prompt = buildSalesPrompt(context);
-    
+    const messages = buildSalesMessages(context);
+
     try {
-      const gptResponse = await aiProvider.generateCompletion(prompt, {
-        temperature: 0.45,
-        max_tokens: 180,
+      const gptResponse = await aiProvider.generateCompletion(messages, {
+        temperature: 0.4,
+        max_tokens: 150,
       });
       let reply = sanitizeReply(gptResponse);
 
       if (isTooSimilar(reply, lastAssistantReply) || isTooSimilarToRecent(reply, recentAssistantReplies)) {
-        console.log('[AI] Generated reply too similar to previous assistant reply, retrying');
-        const retryPrompt = `${prompt}\n\nANTI-LOOP RETRY:\nYour previous assistant reply was: ${lastAssistantReply}\nReply differently. Answer the latest customer request first.`;
-        const retryResponse = await aiProvider.generateCompletion(retryPrompt, {
-          temperature: 0.35,
-          max_tokens: 180,
+        console.log('[AI] Generated reply too similar to previous assistant replies, retrying with strict anti-loop instructions');
+        const retryMessages = appendDeveloperMessage(
+          messages,
+          [
+            'CRITICAL: Your previous draft reply was too similar to what was already said.',
+            'DO NOT repeat yourself. DO NOT use the same sentence structure.',
+            'Answer the user\'s LATEST question or concern directly. If they are talking casually, reply casually.',
+            'Only push the sales process if they are clearly ready.',
+            `Previous draft to AVOID: "${reply}"`,
+            context.lastAssistantReply ? `Last assistant reply: "${context.lastAssistantReply}"` : undefined,
+          ]
+            .filter((line): line is string => Boolean(line))
+            .join('\n')
+        );
+
+        const retryResponse = await aiProvider.generateCompletion(retryMessages, {
+          temperature: 0.55,
+          max_tokens: 150,
         });
         reply = sanitizeReply(retryResponse);
       }
 
       if (isTooSimilar(reply, lastAssistantReply) || isTooSimilarToRecent(reply, recentAssistantReplies)) {
+        console.log('[AI] Still too similar after retry, using hard loop breaker');
         return buildLoopBreakerReply(context);
       }
 
       return reply;
-    } catch (_error) {
-      console.error('[AI] AI generation failed, falling back to safe message');
-      // Final safety fallback if AI fails
+    } catch {
+      console.error('[AI] AI generation failed, falling back to loop breaker');
       return buildLoopBreakerReply(context);
     }
   }

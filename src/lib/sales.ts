@@ -81,7 +81,7 @@ type CombinedSelection = {
   customerName: string | null;
 };
 
-const GREETING_KEYWORDS = ["hi", "hello", "hey", "hii"];
+const GREETING_KEYWORDS = ["hi", "hello", "hey", "hii", "namaste", "morning", "evening", "hlo"];
 const PRICE_KEYWORDS = [
   "price",
   "rate",
@@ -90,10 +90,29 @@ const PRICE_KEYWORDS = [
   "pricing",
   "bhav",
   "price list",
+  "how much",
+  "menu",
 ];
-const EXACT_CONFIRM_MESSAGES = ["confirm", "book", "yes confirm", "confirm order", "book order"];
-const UPSELL_KEYWORDS = ["upgrade", "add", "yes add", "make it 2", "yes"];
-const EDIT_KEYWORDS = ["edit order", "edit", "change order", "modify", "change"];
+const EXACT_CONFIRM_MESSAGES = [
+  "confirm",
+  "book",
+  "yes confirm",
+  "confirm order",
+  "book order",
+  "yes",
+  "ok",
+  "okay",
+  "yep",
+  "haan",
+  "confirming",
+  "done",
+  "proceed",
+  "go ahead",
+  "all good",
+  "perfect",
+];
+const UPSELL_KEYWORDS = ["upgrade", "add", "yes add", "make it 2", "plus one", "one more"];
+const EDIT_KEYWORDS = ["edit order", "edit", "change order", "modify", "change", "update"];
 const DIRECT_SIZE_MESSAGES: ProductSize[] = ["medium", "large", "jumbo"];
 
 function buildWelcomeReply(): string {
@@ -114,9 +133,9 @@ function buildPricingReply(): string {
 
 function buildConfirmedReply(): string {
   return [
-    "Your order is confirmed.",
+    "I've shared your request with our human team.",
     "",
-    "We will prepare the batch and share the next update shortly.",
+    "They will personally verify the details and confirm your booking with you shortly. Thank you for your patience!",
   ].join("\n");
 }
 
@@ -412,8 +431,11 @@ function escapeRegExp(input: string): string {
 }
 
 function isGreetingMessage(message: string): boolean {
-  const normalized = stripTrailingPunctuation(normalizeText(message));
-  return GREETING_KEYWORDS.includes(normalized);
+  const normalized = normalizeText(message);
+  return GREETING_KEYWORDS.some((keyword) => {
+    const regex = new RegExp(`(^|\\b)${escapeRegExp(keyword)}(\\b|$)`, "i");
+    return regex.test(normalized);
+  });
 }
 
 function isPriceMessage(text: string): boolean {
@@ -424,18 +446,27 @@ function isPriceMessage(text: string): boolean {
 }
 
 function isConfirmationMessage(message: string): boolean {
-  const text = normalizeText(message);
-  return EXACT_CONFIRM_MESSAGES.includes(text);
+  const normalized = normalizeText(message);
+  return EXACT_CONFIRM_MESSAGES.some((keyword) => {
+    const regex = new RegExp(`(^|\\b)${escapeRegExp(keyword)}(\\b|$)`, "i");
+    return regex.test(normalized);
+  });
 }
 
 function isUpsellMessage(message: string): boolean {
-  const text = normalizeText(message);
-  return UPSELL_KEYWORDS.includes(text);
+  const normalized = normalizeText(message);
+  return UPSELL_KEYWORDS.some((keyword) => {
+    const regex = new RegExp(`(^|\\b)${escapeRegExp(keyword)}(\\b|$)`, "i");
+    return regex.test(normalized);
+  });
 }
 
 function isEditMessage(message: string): boolean {
-  const text = normalizeText(message);
-  return EDIT_KEYWORDS.includes(text);
+  const normalized = normalizeText(message);
+  return EDIT_KEYWORDS.some((keyword) => {
+    const regex = new RegExp(`(^|\\b)${escapeRegExp(keyword)}(\\b|$)`, "i");
+    return regex.test(normalized);
+  });
 }
 
 function isExactSizeMessage(message: string): boolean {
@@ -722,6 +753,32 @@ export function getDeterministicTransition(args: {
   if (parsed.analysis.escalation.autoHandoff || parsed.wantsHuman) {
     handled = true;
     nextState = "human_handoff";
+  } else if (currentState === "confirmed" && combinedInput) {
+    handled = true;
+    orderPatch = {
+      product_size: combinedInput.productSize,
+      quantity: combinedInput.quantity,
+      customer_name: combinedInput.customerName ?? null,
+      delivery_address: null,
+      delivery_date: null,
+      order_type: buildOrderType(parsed.intent, null),
+      status: "draft",
+      notes: null,
+    };
+    nextState = combinedInput.customerName ? "awaiting_address" : "awaiting_name";
+  } else if (currentState === "confirmed" && selectedSize) {
+    handled = true;
+    orderPatch = {
+      product_size: selectedSize,
+      quantity: null,
+      customer_name: null,
+      delivery_address: null,
+      delivery_date: null,
+      order_type: buildOrderType(parsed.intent, null),
+      status: "draft",
+      notes: null,
+    };
+    nextState = "awaiting_quantity";
   } else if (
     currentState === "confirmed" &&
     (parsed.isEdit || parsed.analysis.intents.includes("edit_order_request"))
@@ -878,10 +935,11 @@ export function getDeterministicTransition(args: {
       };
       nextState = "awaiting_confirmation";
     } else if (parsed.isConfirmation) {
-      nextState = "confirmed";
+      nextState = "human_handoff";
       orderPatch = {
         order_type: buildOrderType(parsed.intent, order),
-        status: "confirmed",
+        status: "awaiting_confirmation",
+        notes: `${order?.notes ? `${order.notes}\n` : ""}User requested confirmation via agent. Handing off for human approval.`,
       };
     } else if (combinedInput) {
       orderPatch = {
@@ -1007,6 +1065,9 @@ export function buildSalesReply(
   }
 
   if (state === "human_handoff") {
+    if (parsed.isConfirmation) {
+      return buildConfirmedReply();
+    }
     return buildEscalationReply(parsed);
   }
 
@@ -1016,23 +1077,6 @@ export function buildSalesReply(
     };
   }
 
-  const checkoutAssistReply = checkoutLocked && allowCheckoutAssist
-    ? buildLockedCheckoutAssistReply({
-        state,
-        parsed,
-        order,
-        rawMessage,
-      })
-    : null;
-
-  if (checkoutAssistReply) {
-    return checkoutAssistReply;
-  }
-
-  if (checkoutLocked) {
-    return buildCheckoutReply(state, order);
-  }
-
   if (canTriggerGreeting && parsed.isGreeting) {
     return buildWelcomeReply();
   }
@@ -1040,6 +1084,10 @@ export function buildSalesReply(
   if (canTriggerGreeting && isPriceMessage(rawMessage)) {
     return buildPricingReply();
   }
+
+  // We are removing the automatic checkoutLocked prompts.
+  // Instead of repeating "How many boxes?" every time the user says something else,
+  // we return null here. This allows the Multi-Agent/AI path (ChatGPT style) to take over.
 
   if (state === "confirmed") {
     const isEditOrCancel = 

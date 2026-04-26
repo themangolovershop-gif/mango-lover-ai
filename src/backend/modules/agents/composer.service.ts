@@ -23,8 +23,8 @@ function isSimilar(candidate: string, previous: string) {
 
   return (
     normalizedCandidate === normalizedPrevious ||
-    normalizedCandidate.includes(normalizedPrevious) ||
-    normalizedPrevious.includes(normalizedCandidate)
+    ((normalizedCandidate.length < 15 || normalizedPrevious.length < 15) &&
+      (normalizedCandidate.includes(normalizedPrevious) || normalizedPrevious.includes(normalizedCandidate)))
   );
 }
 
@@ -74,7 +74,7 @@ function isOperationalContext(context: AgentContext) {
 
 function getStoryLead(context: AgentContext) {
   if (context.intents.includes('pricing') || context.intents.includes('objection_price')) {
-    return 'Acha question hai. Premium Alphonso ka real difference consistency aur natural ripening me feel hota hai.';
+    return "That is a great question. The real value of premium Alphonso lies in the consistency of taste and our natural ripening process.";
   }
 
   if (
@@ -83,11 +83,11 @@ function getStoryLead(context: AgentContext) {
     context.intents.includes('delivery_check') ||
     context.intents.includes('availability_check')
   ) {
-    return 'Sach bataun, real Devgad Alphonso ka difference aroma, texture aur overall feel me jaldi samajh aata hai.';
+    return "Honestly, you can tell the difference with real Devgad Alphonso through its distinct aroma and smooth texture.";
   }
 
   if (context.intents.includes('recommendation_request') || context.intents.includes('gifting')) {
-    return 'Har buyer ka use-case alag hota hai, isliye size suggest karne se pehle thoda context samajhna best rehta hai.';
+    return "Every requirement is unique, so I'd like to suggest the most suitable box based on your specific needs.";
   }
 
   if (
@@ -95,7 +95,7 @@ function getStoryLead(context: AgentContext) {
     context.intents.includes('product_selection') ||
     context.intents.includes('order_start')
   ) {
-    return 'Bilkul. Pehle requirement samajh lete hain, phir sahi box choose karna easy ho jata hai.';
+    return "Certainly. Once we understand your preference, selecting the perfect box becomes quite simple.";
   }
 
   return null;
@@ -110,9 +110,12 @@ function applyPersonalityPass(
   if (
     isOperationalContext(context) ||
     candidate.agents.includes('recovery') ||
-    candidate.agents.includes('order_ops') ||
-    hasStoryTone(compact)
+    candidate.agents.includes('order_ops')
   ) {
+    return compact;
+  }
+
+  if (candidate.agents.includes('mango_expert') && candidate.agents.includes('sales')) {
     return compact;
   }
 
@@ -127,7 +130,7 @@ function applyPersonalityPass(
 
 function buildFallback(context: AgentContext) {
   if (context.intents.includes('restart_order_request') || context.intents.includes('cancellation')) {
-    return 'Theek hai, fresh shuru karte hain. Aap size aur quantity bata do, main aage simple rakhunga.';
+    return "Understood. Let's start fresh. Just tell me the size and quantity you prefer, and I'll guide you from there.";
   }
 
   if (
@@ -135,15 +138,17 @@ function buildFallback(context: AgentContext) {
     context.intents.includes('human_help_request') ||
     context.intents.includes('refund')
   ) {
-    return 'Samajh gaya. Isko main human team tak pahucha raha hoon so it gets handled properly. Thoda sa time dijiye.';
+    return "I see. I'm escalating this to our human team immediately to ensure it's handled properly. Please bear with us for a moment.";
   }
 
   if (context.latestOrder) {
-    return 'Sach bataun, is point par best ye hai ki aap seedha bata do: current order continue karna hai, change karna hai, ya fresh start chahiye?';
+    return "Let me get this right - would you like to proceed with your current order, make a change, or start fresh?";
   }
 
-  return 'Bilkul. Aap price samajhna chahte ho, recommendation chahiye, ya bas real Alphonso ka difference explore karna chahte ho? Main simple tareeke se guide kar dunga.';
+  return "I'm here to assist. Are you looking for a recommendation, pricing details, or would you like to know more about our authentic Alphonso? I can guide you through any of these.";
 }
+
+
 
 function maybeBlendAdvisoryAndSales(
   context: AgentContext,

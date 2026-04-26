@@ -44,44 +44,38 @@ export const decideNextAction = (params: NBAParams): NextAction => {
   if (intents.includes('human_help_request') || intents.includes('refund')) return 'ESCALATE_HUMAN';
   if (wantsRestart) return 'COLLECT_QUANTITY_AND_CITY';
   if (wantsOrderSupport) return 'EDUCATE';
+  
+  // 2. Intent Overrides (Intents > Stage)
+  if (intents.includes('greeting')) return 'GREET';
+  if (hasEducationIntent) return 'EDUCATE';
+  if (hasRecommendationIntent) return 'RECOMMEND_PRODUCT';
 
-  // 2. Stage-based decisions
+  // 3. Stage-based decisions (Fallback)
   switch (leadStage as string) {
     case 'NEW_INQUIRY':
-      if (intents.includes('greeting')) return 'GREET';
-      if (hasEducationIntent) return 'EDUCATE';
-      if (hasRecommendationIntent) return 'RECOMMEND_PRODUCT';
       return 'COLLECT_QUANTITY_AND_CITY';
 
     case 'ENGAGED':
-      if (hasEducationIntent) return 'EDUCATE';
-      if (hasRecommendationIntent) return 'RECOMMEND_PRODUCT';
       if (!entities.quantityDozen || !entities.city) return 'COLLECT_QUANTITY_AND_CITY';
       return 'RECOMMEND_PRODUCT';
 
     case 'QUALIFIED':
-      if (hasEducationIntent) return 'EDUCATE';
-      if (hasRecommendationIntent) return 'RECOMMEND_PRODUCT';
       if (!hasOrder) return 'RECOMMEND_PRODUCT';
       return 'COLLECT_ADDRESS';
 
     case 'AWAITING_DETAILS':
-      if (hasEducationIntent || hasRecommendationIntent) return 'EDUCATE';
       if (!entities.addressText) return 'COLLECT_ADDRESS';
       return 'REQUEST_PAYMENT';
 
     case 'AWAITING_PAYMENT':
-      if (hasEducationIntent || hasRecommendationIntent) return 'EDUCATE';
       if (paymentStatus === 'SUBMITTED') return 'CONFIRM_ORDER';
       return 'REQUEST_PAYMENT';
 
     case 'PAYMENT_SUBMITTED':
-      if (hasEducationIntent || hasRecommendationIntent) return 'EDUCATE';
       return 'CONFIRM_ORDER';
 
     default:
-      if (intents.includes('pricing')) return 'EDUCATE';
-      if (intents.includes('authenticity_check') || intents.includes('quality_check')) return 'EDUCATE';
       return 'EDUCATE';
   }
 };
+

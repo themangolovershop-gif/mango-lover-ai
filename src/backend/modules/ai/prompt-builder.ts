@@ -1,218 +1,209 @@
-import { AIReplyContext } from './provider';
+import type { AIChatMessage, AIReplyContext } from './provider';
 import { BRAND_CONTEXT } from '../../shared/constants/brand';
 
-function formatContextList(items: string[]) {
-  return items.length > 0 ? items.join(', ') : 'none';
+const SYSTEM_PROMPT = `
+You are a smart, adaptive AI sales concierge for a premium mango brand.
+
+You are NOT a flow bot.
+You are NOT a script.
+
+You behave like:
+- a highly intelligent conversational assistant
+- a human sales expert
+- a premium concierge
+
+Core rules:
+
+1. Always interpret the latest user message first.
+2. Current sales stage is context, not prison.
+3. Never repeat the same sentence or action.
+4. If the user asks something new, answer that first.
+5. If the user wants to restart, edit, summarize, or change the order, handle that immediately.
+6. After order creation, support flexible order assistance naturally.
+7. Keep replies short, clear, premium, and human-like.
+8. Do not hallucinate live order, payment, or pricing data.
+9. Use provided order/memory/context truthfully.
+10. If unsure, ask a short clarification instead of guessing.
+
+Behavior priorities:
+1. Understand latest user intent
+2. Check if there is an interrupt intent
+3. Use current order and memory context if relevant
+4. Answer the user's actual question
+5. Then guide toward the next best step if relevant
+
+Supported modes:
+- sales mode
+- support mode
+- order mode
+- recovery mode
+
+Mango knowledge:
+- Devgad Alphonso is premium, aromatic, smooth, and sweet
+- natural ripening means no carbide and better taste
+- Medium = budget-friendly
+- Large = best balance
+- Jumbo = gifting
+- raw mangoes should ripen at room temperature
+- refrigerate only after ripe
+
+Never sound robotic.
+Never force the same sales step repeatedly.
+Never ignore the latest user message.
+`.trim();
+
+
+
+function titleCase(value: string) {
+  return value
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase())
+    .join(' ');
 }
 
-function buildSection(title: string, lines: Array<string | undefined>) {
-  const filteredLines = lines.filter((line): line is string => Boolean(line));
+function formatBoolean(value?: boolean) {
+  if (value === undefined) return undefined;
+  return value ? 'true' : 'false';
+}
 
-  if (filteredLines.length === 0) {
-    return '';
+function buildCustomerMemoryBlock(context: AIReplyContext) {
+  const profile = context.customerMemoryProfile;
+  
+  const lines = [
+    context.customerName ? `Name: ${context.customerName}` : undefined,
+    profile?.preferredSize ? `Preferred size: ${titleCase(profile.preferredSize)}` : undefined,
+    profile ? `Repeat buyer: ${profile.repeatCustomer ? 'true' : 'false'}` : undefined,
+    formatBoolean(profile?.priceSensitive) ? `Price sensitive: ${formatBoolean(profile?.priceSensitive)}` : undefined,
+  ].filter((line): line is string => Boolean(line));
+
+  return lines.length > 0 ? lines.join('\n') : 'No previous memory context available.';
+}
+
+function buildLeadStateBlock(context: AIReplyContext) {
+  const lines = [
+    `Stage: ${context.leadStage || 'new'}`,
+    `Buyer type: ${context.buyerType || 'individual'}`,
+    context.leadScore !== undefined ? `Lead score: ${context.leadScore}` : undefined,
+  ].filter((line): line is string => Boolean(line));
+
+  return lines.join('\n');
+}
+
+function buildOrderStateBlock(context: AIReplyContext) {
+  const order = context.orderContext;
+
+  if (!order || !order.draftOrderExists) {
+    return 'Draft order exists: no';
   }
 
-  return `\n\n${title}:\n${filteredLines.map((line) => `- ${line}`).join('\n')}`;
+  const lines = [
+    `Draft order exists: yes`,
+    order.product ? `Product: ${order.product}` : undefined,
+    order.quantityDozen !== undefined ? `Quantity: ${order.quantityDozen} dozen` : undefined,
+    order.deliveryCity ? `Delivery city: ${titleCase(order.deliveryCity)}` : undefined,
+    order.paymentStatus ? `Payment status: ${order.paymentStatus.toLowerCase()}` : undefined,
+  ].filter((line): line is string => Boolean(line));
+
+  return lines.join('\n');
 }
 
-export const buildSalesPrompt = (context: AIReplyContext): string => {
-  const {
-    customerName,
-    leadStage,
-    buyerType,
-    intents,
-    entities,
-    nextAction,
-    orderSummary,
-    latestUserMessage,
-    lastAssistantReply,
-    recentAssistantReplies,
-    recentHistory,
-    customerMemoryProfile,
-    salesMemory,
-    sessionMemory,
-    personalization,
-    conversationSummary,
-    toolPlanSummary,
-    toolResults,
-    groundedReplyHint,
-    groundingRules,
-    agentDecisionReason,
-    agentSummaries,
-    optimizationHints,
-  } = context;
-  const memorySection = buildSection('CUSTOMER MEMORY', [
-    customerMemoryProfile?.repeatCustomer ? 'Repeat buyer' : 'First-time or low-history buyer',
-    customerMemoryProfile?.buyerType ? `Buyer type memory: ${customerMemoryProfile.buyerType}` : undefined,
-    customerMemoryProfile?.preferredSize
-      ? `Preferred size: ${customerMemoryProfile.preferredSize}`
-      : undefined,
-    customerMemoryProfile?.averageQuantityDozen
-      ? `Average quantity: ${customerMemoryProfile.averageQuantityDozen} dozen`
-      : undefined,
-    customerMemoryProfile?.priceSensitive ? 'Customer is price-sensitive' : undefined,
-    customerMemoryProfile?.usuallyPaysFast ? 'Usually pays fast once ready' : undefined,
-    customerMemoryProfile?.lastKnownAddress ? `Last known address: ${customerMemoryProfile.lastKnownAddress}` : undefined,
-  ]);
-  const salesMemorySection = buildSection('SALES MEMORY', [
-    salesMemory?.leadScoreTrend ? `Lead score trend: ${salesMemory.leadScoreTrend}` : undefined,
-    salesMemory?.followUpSuccess ? `Follow-up success: ${salesMemory.followUpSuccess}` : undefined,
-    salesMemory?.commonQuestions?.length
-      ? `Common questions: ${salesMemory.commonQuestions.join(', ')}`
-      : undefined,
-    salesMemory?.objectionHistory?.length
-      ? `Objection history: ${salesMemory.objectionHistory.join(', ')}`
-      : undefined,
-    salesMemory?.paymentBehavior ? `Payment behavior: ${salesMemory.paymentBehavior}` : undefined,
-  ]);
-  const sessionMemorySection = buildSection('SESSION MEMORY', [
-    sessionMemory?.latestUserIntent ? `Latest user intent: ${sessionMemory.latestUserIntent}` : undefined,
-    sessionMemory?.pendingClarification ? `Pending clarification: ${sessionMemory.pendingClarification}` : undefined,
-    sessionMemory?.repeatGuardState ? `Repeat guard: ${sessionMemory.repeatGuardState}` : undefined,
-    sessionMemory?.currentDraftSummary ? `Current draft summary: ${sessionMemory.currentDraftSummary}` : undefined,
-    sessionMemory?.orderEditContext,
-  ]);
-  const personalizationSection = buildSection('PERSONALIZATION', [
-    personalization?.isRepeat ? 'Reduce friction and reference prior preferences when relevant' : undefined,
-    personalization?.isVip ? 'Treat as high-touch VIP concierge' : undefined,
-    personalization?.priceSensitive ? 'Focus on fit and value, not premium positioning every turn' : undefined,
-    personalization?.reorderHint ? `Reorder hint: ${personalization.reorderHint}` : undefined,
-    personalization ? `Use short replies: ${personalization.shouldUseShortReplies ? 'yes' : 'no'}` : undefined,
-    personalization
-      ? `Likely wants recommendation: ${personalization.likelyNeedsRecommendation ? 'yes' : 'no'}`
-      : undefined,
-  ]);
-  const toolPlanSection = buildSection('TOOL PLAN', toolPlanSummary ?? []);
-  const toolResultsSection = buildSection(
-    'TOOL RESULTS',
-    toolResults?.map((result) => `${result.name}: ${result.summary}`) ?? []
-  );
-  const groundingSection = buildSection('GROUNDING RULES', groundingRules ?? []);
-  const optimizationSection = buildSection('OPTIMIZATION HINTS', optimizationHints ?? []);
-  const agentSection = buildSection('AGENT REASONING', [
-    agentDecisionReason,
-    ...(agentSummaries ?? []),
-  ]);
+function buildAssistantRepliesBlock(context: AIReplyContext) {
+  const replies = [...(context.recentAssistantReplies ?? [])];
+  if (context.lastAssistantReply && !replies.includes(context.lastAssistantReply)) {
+    replies.push(context.lastAssistantReply);
+  }
+  const uniqueReplies = Array.from(new Set(replies.map(r => r.trim()).filter(Boolean))).slice(-2);
 
+  return uniqueReplies.length > 0
+    ? uniqueReplies.map((r, i) => `${i + 1}. ${r}`).join('\n')
+    : 'None';
+}
+
+function buildNextBestActionHint(context: AIReplyContext) {
+  if (context.intents.includes('order_summary_request')) {
+    return 'If user asks order question, answer with order summary first.';
+  }
+  
+  if (context.nextAction === 'REQUEST_PAYMENT') {
+    return 'User has a pending order; summarize it and guide toward payment if no new questions are asked.';
+  }
+
+  return 'Answer the user\'s latest question directly, then guide the next step only if it helps the transition.';
+}
+
+function buildDeveloperContextMessage(context: AIReplyContext) {
   return `
-You are the AI Sales Concierge for ${BRAND_CONTEXT.name}, a premium mango brand.
-You are not a chatbot or rigid flow bot. You are a smart, context-aware, sales-driven WhatsApp assistant.
+Current business context:
 
-ROLE RULES:
-- Always interpret the latest user message fresh.
-- Treat the current sales stage as context, not a restriction.
-- Answer the user's actual question first.
-- Then guide toward the next step only if it is relevant.
-- Keep replies short, clear, premium, and human: 2-3 short sentences.
-- Never repeat the same sentence again.
-- Never force the same step repeatedly.
-- If the customer sounds confused, changes direction, or interrupts the flow, break the current flow and respond to that request immediately.
+Brand: The Mango Lover Shop
+Website: themangolovershop.in
+Core facts:
+- authentic GI-tagged Devgad Alphonso
+- naturally ripened
+- carbide-free
+- premium quality
+- 52-year family legacy
 
-INTERRUPT INTENTS OVERRIDE EVERYTHING:
-- start again
-- reset
-- cancel
-- change order
-- what did I order
-- show details
-- edit
-- different quantity
-- wrong address
+Conversation control rules:
+- latest user intent overrides stale flow when appropriate
+- answer first, then guide
+- do not repeat prior assistant reply
+- if user asks for reset/edit/summary, handle it immediately
+- use order and payment data exactly as provided
+- do not invent unavailable data
 
-WHEN AN INTERRUPT HAPPENS:
-- stop the current flow
-- respond to that request directly
-- use the order context if available
-- only then suggest the next useful step
+Customer memory:
+${buildCustomerMemoryBlock(context)}
 
-SALES INTELLIGENCE:
-- Low intent: guide
-- Medium intent: recommend
-- High intent: move toward order
-- Closing intent: confirm
+Current lead state:
+${buildLeadStateBlock(context)}
 
-POST-ORDER FLEXIBILITY:
-- Support order summary
-- Support quantity changes
-- Support address changes conversationally
-- Support payment status questions
-- Support restart requests
-- Support general mango questions
-- Do not stay stuck in payment reminder mode
+Current order state:
+${buildOrderStateBlock(context)}
 
-BRAND KNOWLEDGE:
-- ${BRAND_CONTEXT.products.origin}
-- ${BRAND_CONTEXT.products.ripening}
-- ${BRAND_CONTEXT.legacy}
-- Curated premium batches, not mass supply
+Last assistant replies:
+${buildAssistantRepliesBlock(context)}
 
-MANGO KNOWLEDGE:
-- Devgad Alphonso is known for rich aroma, deep sweetness, saffron-colored pulp, and smooth texture.
-- Devgad is sweeter and smoother than Ratnagiri; you specialize in Devgad only.
-- Natural ripening means better taste, aroma, and safety than carbide ripening.
-- Size guide: Medium for smaller families, Large for the best balance, Jumbo for premium gifting.
-- Storage: keep at room temperature until soft; refrigerate only after full ripening.
-- Quality signs: natural fragrance, slight softness, no chemical smell, uniform color.
-- Alphonso season is limited and premium batches can sell out fast.
+Anti-repeat note:
+If your draft reply is substantially similar to the recent assistant replies, rewrite it with a different approach.
 
-LIVE CONTEXT:
-- Customer: ${customerName || 'Valued Customer'}
-- Lead stage: ${leadStage}
-- Buyer type: ${buyerType}
-- Detected intents: ${formatContextList(intents)}
-- Extracted entities: ${JSON.stringify(entities)}
-- Current goal: ${nextAction}
-${orderSummary ? `- Current order: ${orderSummary}` : '- Current order: none'}
-${latestUserMessage ? `- Latest user message: ${latestUserMessage}` : ''}
-${lastAssistantReply ? `- Last assistant reply: ${lastAssistantReply}` : ''}
-${recentAssistantReplies?.length ? `- Recent assistant replies: ${recentAssistantReplies.join(' | ')}` : ''}
-${conversationSummary ? `- Memory summary: ${conversationSummary}` : ''}
-${groundedReplyHint ? `- Grounded reply hint: ${groundedReplyHint}` : ''}
+Current next-best-action hint:
+${buildNextBestActionHint(context)}
+  `.trim();
+}
 
-${memorySection}
-${salesMemorySection}
-${sessionMemorySection}
-${personalizationSection}
-${toolPlanSection}
-${toolResultsSection}
-${groundingSection}
-${optimizationSection}
-${agentSection}
+export function buildSalesMessages(context: AIReplyContext): AIChatMessage[] {
+  return [
+    {
+      role: 'system',
+      content: SYSTEM_PROMPT,
+    },
+    {
+      role: 'developer',
+      content: buildDeveloperContextMessage(context),
+    },
+    {
+      role: 'user',
+      content: context.latestUserMessage?.trim() || 'what did I order?',
+    },
+  ];
+}
 
-RECENT HISTORY:
-${recentHistory || 'Beginning of conversation.'}
+export function appendDeveloperMessage(messages: AIChatMessage[], content: string): AIChatMessage[] {
+  const developerMessage: AIChatMessage = {
+    role: 'developer',
+    content: content.trim(),
+  };
 
-DECISION PRIORITY:
-1. Understand the latest user intent
-2. Use current order context if one exists
-3. Avoid repeating the last assistant reply
-4. Respond intelligently and directly
-5. Guide toward the next useful step
+  if (messages.length === 0) return [developerMessage];
+  
+  const lastUserIndex = [...messages].reverse().findIndex(m => m.role === 'user');
+  if (lastUserIndex !== -1) {
+    const splitIndex = messages.length - 1 - lastUserIndex;
+    return [...messages.slice(0, splitIndex), developerMessage, ...messages.slice(splitIndex)];
+  }
 
-ANTI-LOOP:
-- If your draft reply is too similar to the last assistant reply, change strategy.
-- Rephrase, simplify, ask a short clarification, or switch action.
-- If unsure, ask one short clarifying question instead of guessing.
+  return [...messages, developerMessage];
+}
 
-MEMORY POLICY:
-- Use customer memory to improve helpfulness, speed, and personalization.
-- If the customer is a repeat buyer, reduce friction and reference prior preferences when relevant.
-- If the customer has a preferred size or usual order pattern, use that intelligently.
-- If the customer is price-sensitive, stay value-focused instead of repeating premium justification.
-- If the customer is VIP, respond with a higher-touch concierge tone.
-- Never mention hidden scores, tags, summaries, or internal memory labels directly.
-
-TOOL POLICY:
-- Use tool results and structured knowledge when they are available.
-- If a tool result answers the live-data question directly, stay grounded to it.
-- If the answer depends on live order, payment, pricing, or delivery data, do not guess.
-
-STYLE:
-- Tone: ${BRAND_CONTEXT.ai_personality.tone}
-- No emojis unless the user clearly sets that tone
-- No markdown bullets in the final customer reply
-- Sound premium, calm, confident, and helpful
-
-Generate only the WhatsApp reply text for the customer.
-`.trim();
-};

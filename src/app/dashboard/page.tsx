@@ -28,10 +28,19 @@ interface Conversation {
   lead_tag: LeadTag;
   updated_at: string;
   last_message: string | null;
+  messages: Message[];
 }
 
 interface Message {
   id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+interface RealtimeMessageRow {
+  id: string;
+  conversation_id: string;
   role: "user" | "assistant";
   content: string;
   created_at: string;
@@ -102,6 +111,51 @@ function avatarColor(id: string): string {
     "bg-rose-500/20   text-rose-300   border-rose-500/10",
   ];
   return COLORS[parseInt(id, 10) % COLORS.length] || COLORS[0]!;
+}
+
+function mergeConversationMessage(
+  conversations: Conversation[],
+  realtimeMessage: RealtimeMessageRow
+) {
+  const nextMessage: Message = {
+    id: realtimeMessage.id,
+    role: realtimeMessage.role,
+    content: realtimeMessage.content,
+    created_at: realtimeMessage.created_at,
+  };
+
+  return conversations
+    .map((conversation) => {
+      if (conversation.id !== realtimeMessage.conversation_id) {
+        return conversation;
+      }
+
+      const existingIndex = conversation.messages.findIndex(
+        (message) =>
+          message.id === nextMessage.id ||
+          (message.id.startsWith("opt-") &&
+            message.role === nextMessage.role &&
+            message.content === nextMessage.content)
+      );
+
+      const messages =
+        existingIndex === -1
+          ? [...conversation.messages, nextMessage]
+          : conversation.messages.map((message, index) =>
+              index === existingIndex ? nextMessage : message
+            );
+
+      return {
+        ...conversation,
+        messages,
+        last_message: nextMessage.content,
+        updated_at: nextMessage.created_at,
+      };
+    })
+    .sort(
+      (left, right) =>
+        new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()
+    );
 }
 
 // ─── RESTRAINED SUB COMPONENTS ──────────────────────────────────────────────
@@ -267,7 +321,7 @@ function Header({ onLogout, activeTab, setActiveTab }: { onLogout: () => void; a
         <HealthService label="AI" status={health.ai as "green" | "amber" | "red" | "gray"} icon={Zap} />
         <HealthService label="WH" status={health.webhook as "green" | "amber" | "red" | "gray"} icon={Activity} />
       </div>
-        <button onClick={onLogout} className="text-white/20 hover:text-rose-400 transition-colors">
+        <button onClick={onLogout} title="Logout" aria-label="Logout" className="text-white/20 hover:text-rose-400 transition-colors">
           <LogOut size={16} />
         </button>
       </div>
@@ -435,6 +489,8 @@ function ChatPanel({ conversation, messages, mode, onModeToggle, onSend }: ChatP
           />
           <button 
             onClick={() => { if(input.trim()) { onSend(input); setInput(""); } }}
+            title="Send message"
+            aria-label="Send message"
             className="absolute right-2.5 top-2.5 h-10 w-10 flex items-center justify-center rounded-lg bg-amber-500 text-[#070d1b] hover:bg-amber-400 transition-all"
           >
             <ArrowRight size={18} />
@@ -494,6 +550,9 @@ function ContextPanel({ conversation, order, followUps, onSchedule, onConfirm, o
           <textarea 
             value={msg} 
             onChange={e => setMsg(e.target.value)}
+            title="Follow-up message"
+            placeholder="Enter follow-up message..."
+            aria-label="Follow-up message"
             className="w-full bg-white/5 border border-white/5 rounded-lg p-3 text-[11px] text-white/60 resize-none outline-none focus:border-amber-500/40 mb-3"
             rows={3}
           />
@@ -583,66 +642,103 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [conversationsData, audit] = await Promise.all([apiFetch("/api/conversations"), apiFetch("/api/webhook-logs")]);
-    setConversations(conversationsData || []);
-    setLogs(audit || []);
-    setLoading(false);
+
+    try {
+      const [conversationsData, audit] = await Promise.all([
+        apiFetch("/api/conversations"),
+        apiFetch("/api/webhook-logs"),
+      ]);
+      const nextConversations = Array.isArray(conversationsData)
+        ? (conversationsData as Conversation[])
+        : [];
+
+      setConversations(nextConversations);
+      setLogs(Array.isArray(audit) ? audit : []);
+      setSelectedId((current) => {
+        if (nextConversations.length === 0) {
+          return null;
+        }
+
+        if (current && nextConversations.some((conversation) => conversation.id === current)) {
+          return current;
+        }
+
+        return nextConversations[0]?.id ?? null;
+      });
+    } finally {
+      setLoading(false);
+    }
   }, [apiFetch]);
 
   useEffect(() => {
-    loadData();
+    let isMounted = true;
     let channel: { unsubscribe: () => void } | null = null;
-    import("@/lib/supabase-client").then(({ supabaseClient: sb }) => {
-      const ch = sb.channel("rt-conversations")
-        .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, loadData)
+
+    const connectRealtime = async () => {
+      await loadData();
+
+      const { supabaseClient } = await import("@/lib/supabaseClient");
+
+      if (!isMounted) {
+        return;
+      }
+
+      channel = supabaseClient
+        .channel("rt-dashboard-messages")
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "messages" },
+          (payload) => {
+            const newMessage = payload.new as RealtimeMessageRow;
+            setConversations((current) => mergeConversationMessage(current, newMessage));
+            void loadData();
+          }
+        )
         .subscribe();
-      channel = ch;
-    });
-    return () => { if (channel) channel.unsubscribe(); };
+    };
+
+    void connectRealtime();
+
+    return () => {
+      isMounted = false;
+      if (channel) channel.unsubscribe();
+    };
   }, [loadData]);
 
   useEffect(() => {
     if (!selectedId) {
       setMessages([]);
+      return;
+    }
+
+    setMessages(
+      conversations.find((currentConversation) => currentConversation.id === selectedId)?.messages ?? []
+    );
+  }, [conversations, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) {
       setOrder(null);
       setFollowUps([]);
       return;
     }
 
-    // Initial fetch
-    apiFetch(`/api/conversations/${selectedId}/messages`).then((m: Message[]) => setMessages(m || []));
-    apiFetch(`/api/conversations/${selectedId}/order`).then((o: Order | null) => setOrder(o));
+    apiFetch(`/api/conversations/${selectedId}/order`).then((o: Order | null) => setOrder(o || null));
     apiFetch(`/api/follow-ups?conversation_id=${selectedId}`).then((f: FollowUp[]) => setFollowUps(f || []));
-
-    // Real-time messages for the active chat
-    let msgChannel: { unsubscribe: () => void } | null = null;
-    import("@/lib/supabase-client").then(({ supabaseClient: sb }) => {
-      const ch = sb.channel(`rt-msgs-${selectedId}`)
-        .on("postgres_changes", 
-            { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${selectedId}` }, 
-            (payload) => {
-              const newMsg = payload.new as Message;
-              setMessages(prev => {
-                // Prevent duplicates if optimistic update already added it
-                if (prev.some(m => m.id === newMsg.id || (m.role === newMsg.role && m.content === newMsg.content && m.id.startsWith('opt-')))) {
-                  return prev.map(m => m.id.startsWith('opt-') && m.content === newMsg.content ? newMsg : m);
-                }
-                return [...prev, newMsg];
-              });
-              loadData(); // Also refresh the inbox preview
-            }
-        )
-        .subscribe();
-      msgChannel = ch;
-    });
-
-    return () => { if (msgChannel) msgChannel.unsubscribe(); };
-  }, [selectedId, apiFetch, loadData]);
-
+  }, [selectedId, apiFetch]);
   const handleSend = async (txt: string) => {
     if (!selectedId || !txt.trim()) return;
     const optimistic: Message = { id: `opt-${Date.now()}`, role: "assistant", content: txt, created_at: new Date().toISOString() };
     setMessages(prev => [...prev, optimistic]);
+    setConversations(prev =>
+      mergeConversationMessage(prev, {
+        id: optimistic.id,
+        conversation_id: selectedId,
+        role: optimistic.role,
+        content: optimistic.content,
+        created_at: optimistic.created_at,
+      })
+    );
     await apiFetch(`/api/conversations/${selectedId}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

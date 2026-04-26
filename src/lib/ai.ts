@@ -5,7 +5,7 @@ import { SYSTEM_PROMPT } from "@/lib/system-prompt";
 
 let hasLoggedAIConfig = false;
 
-function getAIConfig() {
+export function getAIConfig() {
   const openRouterApiKey = process.env.OPENROUTER_API_KEY;
   const openAIApiKey = process.env.OPENAI_API_KEY;
   const provider = openRouterApiKey ? "openrouter" : openAIApiKey ? "openai" : "none";
@@ -45,7 +45,7 @@ function resolveModel(
   return requestedModel || "openai/gpt-4o-mini";
 }
 
-function getOpenAIClient() {
+export function getOpenAIClient() {
   const { openRouterApiKey, openAIApiKey, provider } = getAIConfig();
 
   if (provider === "none") {

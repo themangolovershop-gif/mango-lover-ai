@@ -1,29 +1,10 @@
 import { NextRequest } from "next/server";
 import crypto from "crypto";
-import { getAIResponse } from "@/lib/ai";
-import {
-  cancelPendingFollowUps,
-  getLatestDraftOrder,
-  hasPendingFollowUp,
-  pickAutoFollowUpTemplate,
-  scheduleAutoFollowUp,
-} from "@/lib/followups";
-import {
-  buildSalesReply,
-  getCheckoutFallback,
-  getDeterministicTransition,
-  getDraftOrder,
-  isLockedCheckoutState,
-  normalizeSalesStateValue,
-  parseSalesInput,
-  persistDraftOrderPatch,
-  updateConversationSalesFields,
-} from "@/lib/sales";
+import { processSmartReply } from "@/lib/smart-reply/messageProcessor";
+import { cancelPendingFollowUps } from "@/lib/followups";
 import { supabase } from "@/lib/supabase";
-import type { Conversation, InteractiveButton } from "@/lib/types";
+import type { Conversation } from "@/lib/types";
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
-import { extractEntities } from "@/backend/modules/ai/entity.service";
-import type { AgentContext } from "@/backend/modules/agents/types";
 import { AGENT_VERSION } from "@/backend/shared/version";
 
 export const runtime = "nodejs";
@@ -89,14 +70,6 @@ const log = {
   error: (message: string, details?: unknown) =>
     console.error(`[WH-ERROR] ${message}`, details ?? ""),
 };
-
-function buildSafeFallbackReply() {
-  return [
-    "I can help with premium mango orders.",
-    "",
-    "Reply PRICE to see the current box options, or send Medium, Large, or Jumbo to begin the booking.",
-  ].join("\n");
-}
 
 function verifySignature(payload: string, signature: string | null): boolean {
   const secret = process.env.WHATSAPP_APP_SECRET;
@@ -315,164 +288,17 @@ async function handleInboundTextMessage(
         };
       }
 
-      const stateBefore = normalizeSalesStateValue(
-        (conversation as Conversation & { sales_state?: string }).sales_state
-      );
-      log.debug("state before", {
-        conversationId: conversation.id,
-        stateBefore,
-      });
-      const typedConversation = {
-        ...(conversation as Conversation),
-        sales_state: stateBefore,
-      };
-      
-      const parsed = parseSalesInput(text);
-      const draftOrderBefore = await getDraftOrder(typedConversation.id);
+      const { text: replyText } = await processSmartReply(conversation.id, text);
 
-      const transition = getDeterministicTransition({
-        conversation: typedConversation,
-        parsed,
-        order: draftOrderBefore,
-        rawMessage: text,
-      });
-      log.debug("next state", {
-        conversationId: typedConversation.id,
-        stateBefore,
-        nextState: transition.nextState,
-      });
+      await supabase
+        .from("conversations")
+        .update({
+          name: (name && conversation.name !== name) ? name : undefined,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", conversation.id);
 
-      const draftOrderAfter = await persistDraftOrderPatch({
-        conversation: typedConversation,
-        existingOrder: draftOrderBefore,
-        orderPatch: transition.orderPatch,
-      });
-
-      let salesState = transition.nextState;
-      const leadTag = transition.leadTag;
-      const resetFollowUpCount = stateBefore !== salesState;
-      const advancedCheckoutState =
-        transition.orderPatch !== null || stateBefore !== salesState;
-
-      const conversationAfter: Conversation = {
-        ...typedConversation,
-        sales_state: salesState,
-        lead_tag: leadTag,
-        last_customer_intent: transition.lastCustomerIntent,
-        follow_up_count: resetFollowUpCount ? 0 : typedConversation.follow_up_count,
-        name: (name && conversation.name !== name) ? name : conversation.name,
-        updated_at: new Date().toISOString(),
-      };
-
-      const deterministicReply = buildSalesReply(
-        conversationAfter,
-        parsed,
-        draftOrderAfter,
-        text,
-        {
-          allowCheckoutAssist: !advancedCheckoutState,
-        }
-      );
-      log.debug("deterministicHit", {
-        conversationId: typedConversation.id,
-        deterministicHit: deterministicReply !== null,
-      });
-      
-      const checkoutLocked = isLockedCheckoutState(stateBefore) || isLockedCheckoutState(salesState);
-      log.debug("AI blocked", {
-        conversationId: typedConversation.id,
-        aiBlocked: deterministicReply === null && checkoutLocked,
-        checkoutLocked,
-      });
-      let replyText = "";
-      let replyButtons: InteractiveButton[] | undefined = undefined;
-
-      if (deterministicReply !== null) {
-        if (typeof deterministicReply === "object") {
-          replyText = deterministicReply.text;
-          replyButtons = deterministicReply.buttons;
-        } else {
-          replyText = deterministicReply;
-        }
-      } else {
-        // AI / Multi-Agent Flow
-        // We now allow AI to handle messages even in "locked" checkout states
-        // if the deterministic system didn't catch a specific order detail.
-        // This allows for interruptions, FAQs, and flexibility.
-        const { data: history, error: historyError } = await supabase
-          .from("messages")
-          .select("role, content")
-          .eq("conversation_id", typedConversation.id)
-          .order("created_at", { ascending: true })
-          .limit(20);
-
-        if (historyError) throw new Error(`History fetch failed: ${historyError.message}`);
-
-        try {
-          const { MasterAgent } = await import("@/backend/modules/agents/master-agent.service");
-          const masterAgent = new MasterAgent();
-
-          const agentContext = {
-            customerId: typedConversation.id, // Using conversation ID as customer proxy if needed, or just conversation ID
-            conversationId: typedConversation.id,
-            leadId: typedConversation.id, // Proxy
-            phone: typedConversation.phone,
-            latestMessage: text,
-            recentHistory: (history || [])
-              .map((m) => `${m.role === "user" ? "Customer" : "Assistant"}: ${m.content}`)
-              .join("\n"),
-            lastAssistantReply: history?.filter((m) => m.role === "assistant").pop()?.content,
-            recentAssistantReplies: history
-              ?.filter((m) => m.role === "assistant")
-              .slice(-5)
-              .map((m) => m.content) || [],
-            intents: parsed.analysis.intents,
-            primaryIntent: parsed.analysis.primaryIntent,
-            entities: extractEntities(text),
-            leadStage: typedConversation.sales_state, 
-            buyerType: typedConversation.lead_tag || 'personal',
-            nextAction: (transition as any).nextAction || 'NONE',
-            latestOrder: await getLatestDraftOrder(typedConversation.id),
-          };
-
-          const processed = await masterAgent.process(agentContext as unknown as AgentContext);
-          replyText = processed.responseText;
-
-          // If recovery agent adjusted the state
-          const recoveryResult = processed.results.find((r) => r.agent === "recovery");
-          if (recoveryResult?.nextState) {
-            salesState = recoveryResult.nextState;
-          }
-        } catch (agentErr) {
-          log.error("Multi-Agent failure", agentErr);
-          // Only use checkout fallback as a last resort in case of AI failure
-          if (checkoutLocked) {
-            replyText = getCheckoutFallback(salesState);
-          } else {
-            replyText = buildSafeFallbackReply();
-          }
-        }
-      }
-
-      if (!replyText) replyText = "Please tell me how I can help you today.";
-      log.debug("reply preview", {
-        conversationId: typedConversation.id,
-        preview: replyText.slice(0, 120),
-        hasButtons: !!replyButtons?.length,
-        buttonCount: replyButtons?.length ?? 0,
-      });
-
-      await updateConversationSalesFields({
-        conversationId: typedConversation.id,
-        salesState,
-        leadTag,
-        lastCustomerIntent: transition.lastCustomerIntent,
-        resetFollowUpCount,
-        expectedUpdatedAt: conversation.updated_at,
-        name: (name && conversation.name !== name) ? name : undefined,
-      });
-
-      const sendResult = await sendWhatsAppMessage(phone, replyText, replyButtons);
+      const sendResult = await sendWhatsAppMessage(phone, replyText);
       const outboundMsgId = sendResult?.messages?.[0]?.id || null;
 
       if (!outboundMsgId) throw new Error("Meta send succeeded without an outbound message id.");
@@ -480,7 +306,7 @@ async function handleInboundTextMessage(
       // SIDE EFFECTS: These should NOT crash the main webhook response and trigger Meta retries
       try {
         const { error: insertAssistantError } = await supabase.from("messages").insert({
-          conversation_id: typedConversation.id,
+          conversation_id: conversation.id,
           role: "assistant",
           content: replyText,
           whatsapp_msg_id: outboundMsgId,
@@ -488,42 +314,25 @@ async function handleInboundTextMessage(
 
         if (insertAssistantError) {
           log.warn("Assistant message store failed, but message was sent", {
-            conversationId: typedConversation.id,
+            conversationId: conversation.id,
             error: insertAssistantError.message
           });
         }
-
-        const latestOrder = await getLatestDraftOrder(typedConversation.id);
-        const followUpChoice = pickAutoFollowUpTemplate({
-          conversation: conversationAfter,
-          draftOrder: latestOrder,
-        });
-        const alreadyPending = await hasPendingFollowUp(typedConversation.id);
-
-        if (followUpChoice.message && followUpChoice.delayHours && !alreadyPending) {
-          await scheduleAutoFollowUp({
-            conversationId: typedConversation.id,
-            phone,
-            message: followUpChoice.message,
-            delayHours: followUpChoice.delayHours,
-            reason: followUpChoice.reason,
-          });
-        }
       } catch (sideEffectError) {
-        log.warn("Webhook side-effect failed (logging/followups), continuing to return 200", {
+        log.warn("Webhook side-effect failed (assistant store), continuing to return 200", {
           error: sideEffectError instanceof Error ? sideEffectError.message : String(sideEffectError)
         });
       }
 
       log.info("Webhook flow completed", {
-        conversationId: typedConversation.id,
+        conversationId: conversation.id,
         outboundMsgId,
         durationMs: Date.now() - startedAt,
       });
 
       const result: WebhookResult = {
         status: "replied",
-        conversation_id: typedConversation.id,
+        conversation_id: conversation.id,
         outbound_meta_message_id: outboundMsgId,
         whatsapp_msg_id: whatsappMsgId,
       };

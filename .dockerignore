@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.env.local
+.env.*.local
+coverage
+scratch
+docs
+k8s
+.vscode
+.claude
+.gemini
+*.log

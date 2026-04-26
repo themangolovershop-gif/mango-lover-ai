@@ -87,8 +87,8 @@ body {
 /* Glass */
 .glass {
   background: rgba(13, 21, 38, 0.7);
-  backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
 }
 
 /* Status dots */

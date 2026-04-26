@@ -136,6 +136,8 @@ export function ChatWindow({
           <button
             onClick={onSend}
             disabled={sending || !input.trim()}
+            title="Send reply"
+            aria-label="Send reply"
             className="absolute bottom-3 right-3 h-8 w-8 rounded-lg bg-primary text-white flex items-center justify-center hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:scale-100"
           >
             <ArrowRight size={16} />

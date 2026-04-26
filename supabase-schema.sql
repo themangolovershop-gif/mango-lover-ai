@@ -16,6 +16,7 @@ create extension if not exists pgcrypto;
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   new.updated_at = now();
@@ -534,6 +535,7 @@ end $$;
 create or replace function public.increment_follow_up_count(conv_id uuid)
 returns setof public.conversations
 language plpgsql
+set search_path = public
 as $$
 begin
   return query
@@ -550,6 +552,7 @@ $$;
 create or replace function public.acquire_lock(lock_id bigint)
 returns boolean
 language plpgsql
+set search_path = public
 as $$
 begin
   return pg_try_advisory_lock(lock_id);
@@ -559,8 +562,51 @@ $$;
 create or replace function public.release_lock(lock_id bigint)
 returns boolean
 language plpgsql
+set search_path = public
 as $$
 begin
   return pg_advisory_unlock(lock_id);
 end;
 $$;
+
+-- RLS SETUP
+-- Enable RLS on all tables
+alter table public.conversations enable row level security;
+alter table public.messages enable row level security;
+alter table public.orders enable row level security;
+alter table public.follow_ups enable row level security;
+alter table public.webhook_logs enable row level security;
+
+-- The following tables were mentioned in the schema but might be managed via Prisma. 
+-- We enable RLS on them as well if they exist.
+do $$ 
+begin
+  alter table if exists public.analytics_events enable row level security;
+  alter table if exists public.customer_memory enable row level security;
+  alter table if exists public.revenue enable row level security;
+exception when others then null;
+end $$;
+
+-- Create policies to allow Service Role (Backend) full access while denying everyone else.
+-- Note: service_role bypasses RLS by default, but adding these policies clears the Supabase Advisor warnings.
+
+create policy "Service role full access" on public.conversations for all to service_role using (true) with check (true);
+create policy "Service role full access" on public.messages for all to service_role using (true) with check (true);
+create policy "Service role full access" on public.orders for all to service_role using (true) with check (true);
+create policy "Service role full access" on public.follow_ups for all to service_role using (true) with check (true);
+create policy "Service role full access" on public.webhook_logs for all to service_role using (true) with check (true);
+
+do $$ 
+begin
+  if exists (select 1 from pg_tables where tablename = 'analytics_events') then
+    create policy "Service role full access" on public.analytics_events for all to service_role using (true) with check (true);
+  end if;
+  if exists (select 1 from pg_tables where tablename = 'customer_memory') then
+    create policy "Service role full access" on public.customer_memory for all to service_role using (true) with check (true);
+  end if;
+  if exists (select 1 from pg_tables where tablename = 'revenue') then
+    create policy "Service role full access" on public.revenue for all to service_role using (true) with check (true);
+  end if;
+exception when others then null;
+end $$;
+

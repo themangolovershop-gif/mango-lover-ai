@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: whatsapp-frontend-service
+  labels:
+    app: whatsapp-agent
+    component: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: whatsapp-agent
+    component: frontend
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP
+      name: http

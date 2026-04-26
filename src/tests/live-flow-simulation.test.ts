@@ -15,6 +15,10 @@ type InMemoryDb = {
     id: string;
   }>;
   aiCalls: number;
+  aiRequests: Array<{
+    messages: Array<{ role: string; content: string }>;
+  }>;
+  aiResponder: (messages: Array<{ role: string; content: string }>) => Promise<string>;
   idCounter: number;
   failNextConversationOptimisticUpdate: boolean;
   webhook_logs: WebhookLog[];
@@ -32,6 +36,8 @@ function createDb(): InMemoryDb {
     followUps: [],
     sentReplies: [],
     aiCalls: 0,
+    aiRequests: [],
+    aiResponder: async (messages) => defaultSmartReply(messages),
     idCounter: 1,
     failNextConversationOptimisticUpdate: false,
     webhook_logs: [],
@@ -42,6 +48,45 @@ function nextId(db: InMemoryDb, prefix: string) {
   const value = `${prefix}-${db.idCounter}`;
   db.idCounter += 1;
   return value;
+}
+
+function getLatestPromptMessage(messages: Array<{ role: string; content: string }>) {
+  return (
+    [...messages]
+      .reverse()
+      .find((message) => message.role === "user")
+      ?.content.trim()
+      .toLowerCase() || ""
+  );
+}
+
+function defaultSmartReply(messages: Array<{ role: string; content: string }>) {
+  switch (getLatestPromptMessage(messages)) {
+    case "hi":
+      return Promise.resolve(
+        "Hi! Welcome to The Mango Lover Shop. What are you looking for today?"
+      );
+    case "price?":
+      return Promise.resolve(
+        "We have Medium, Large, and Jumbo Devgad Alphonso options. If you want, I can help you choose the right size."
+      );
+    case "natural hai?":
+      return Promise.resolve(
+        "Yes, our Devgad Alphonso mangoes are naturally ripened and carbide-free."
+      );
+    case "which is best?":
+      return Promise.resolve(
+        "Large gives the best balance for most buyers. Jumbo is usually best if you're buying for gifting."
+      );
+    case "payment done":
+      return Promise.resolve(
+        "Noted. If you want, send the payment reference or screenshot and I'll help from there."
+      );
+    default:
+      return Promise.resolve(
+        "Happy to help with mangoes, pricing, delivery, or your order. What would you like to know?"
+      );
+  }
 }
 
 function nowIso() {
@@ -468,9 +513,29 @@ async function importWebhookRoute(db: InMemoryDb) {
   }));
 
   vi.doMock("@/lib/ai", () => ({
+    getAIConfig: vi.fn(() => ({ model: "test-model", provider: "openai" })),
+    getOpenAIClient: vi.fn(() => ({
+      chat: {
+        completions: {
+          create: vi.fn(async ({ messages }: { messages: Array<{ role: string; content: string }> }) => {
+            db.aiCalls += 1;
+            const requestMessages = (messages || []).map((message) => ({
+              role: String(message.role),
+              content: String(message.content),
+            }));
+            db.aiRequests.push({ messages: requestMessages });
+            const content = await db.aiResponder(requestMessages);
+
+            return {
+              choices: [{ message: { content } }],
+            };
+          }),
+        },
+      },
+    })),
     getAIResponse: vi.fn(async () => {
       db.aiCalls += 1;
-      return "AI fallback reply";
+      return "Unused legacy AI path";
     }),
   }));
 
@@ -494,7 +559,7 @@ async function postWebhook(
   return route.POST(request);
 }
 
-describe("Live Flow Simulation", () => {
+describe("Webhook Smart Reply Flow", () => {
   let db: InMemoryDb;
 
   beforeEach(() => {
@@ -505,159 +570,134 @@ describe("Live Flow Simulation", () => {
     process.env.WHATSAPP_PHONE_NUMBER_ID = "phone-id";
   });
 
-  it("simulates the Raj deterministic checkout flow through the real webhook route", async () => {
-    const route = await importWebhookRoute(db);
-
-    const steps = [
-      { messageId: "msg-1", text: "Hi", expectState: "browsing", replyIncludes: "Would you like to see prices" },
-      { messageId: "msg-2", text: "Price", expectState: "browsing", replyIncludes: "Medium" },
-      { messageId: "msg-3", text: "Large", expectState: "awaiting_quantity", replyIncludes: "How many boxes" },
-      { messageId: "msg-4", text: "2", expectState: "awaiting_name", replyIncludes: "May I have your name" },
-      { messageId: "msg-5", text: "Raj", expectState: "awaiting_address", replyIncludes: "full delivery address" },
-      { messageId: "msg-6", text: "Walkeshwar Mumbai", expectState: "awaiting_date", replyIncludes: "When would you like delivery" },
-      { messageId: "msg-7", text: "Tomorrow", expectState: "awaiting_confirmation", replyIncludes: "Order Summary" },
-      { messageId: "msg-8", buttonTitle: "CONFIRM", expectState: "confirmed", replyIncludes: "order is confirmed" },
-      { messageId: "msg-9", text: "Hello", expectState: "confirmed", replyIncludes: "another booking" },
-    ] as const;
-
-    for (const step of steps) {
-      const response = await postWebhook(route, buildWebhookPayload(step));
-      expect(response.status).toBe(200);
-
-      const body = await response.json();
-      expect(body.status).toBe("replied");
-
-      const conversation = db.conversations[0];
-      expect(conversation.sales_state).toBe(step.expectState);
-
-      const lastAssistantMessage = [...db.messages]
-        .filter((message) => message.role === "assistant")
-        .at(-1);
-
-      expect(lastAssistantMessage?.content).toContain(step.replyIncludes);
-      expect(lastAssistantMessage?.whatsapp_msg_id).toMatch(/^wamid\./);
-    }
-
-    expect(db.aiCalls).toBe(0);
-    expect(db.conversations).toHaveLength(1);
-
-    const conversation = db.conversations[0];
-    const latestOrder = [...db.orders].sort((left, right) =>
-      right.updated_at.localeCompare(left.updated_at)
-    )[0];
-
-    expect(conversation.sales_state).toBe("confirmed");
-    expect(latestOrder).toMatchObject({
-      customer_name: "Raj",
-      product_size: "large",
-      quantity: 2,
-      delivery_address: "Walkeshwar Mumbai",
-      delivery_date: "Tomorrow",
-      status: "confirmed",
-    });
-
-    expect(db.messages.filter((message) => message.role === "assistant")).toHaveLength(9);
-    expect(
-      db.messages
-        .filter((message) => message.role === "assistant")
-        .every((message) => typeof message.whatsapp_msg_id === "string" && message.whatsapp_msg_id.length > 0)
-    ).toBe(true);
-
-    expect(db.followUps.filter((followUp) => followUp.status === "pending")).toHaveLength(1);
-    expect(db.followUps.filter((followUp) => followUp.status === "cancelled").length).toBeGreaterThan(0);
-  });
-
-  it("keeps checkout locked when a greeting arrives in awaiting_name", async () => {
-    const route = await importWebhookRoute(db);
-
-    await postWebhook(route, buildWebhookPayload({ messageId: "msg-a", text: "Large 2" }));
-    expect(db.conversations[0]?.sales_state).toBe("awaiting_name");
-
-    const response = await postWebhook(
-      route,
-      buildWebhookPayload({ messageId: "msg-b", text: "Hi" })
-    );
-
-    expect(response.status).toBe(200);
-    expect(db.conversations[0]?.sales_state).toBe("awaiting_name");
-
-    const lastAssistantMessage = [...db.messages]
-      .filter((message) => message.role === "assistant")
-      .at(-1);
-
-    expect(lastAssistantMessage?.content).toContain("May I have your name");
-    expect(db.aiCalls).toBe(0);
-  });
-
-  it("answers trust questions during checkout without repeating the raw quantity prompt alone", async () => {
-    const route = await importWebhookRoute(db);
-
-    await postWebhook(route, buildWebhookPayload({ messageId: "msg-quality-1", text: "Large" }));
-    expect(db.conversations[0]?.sales_state).toBe("awaiting_quantity");
-
-    const response = await postWebhook(
-      route,
-      buildWebhookPayload({ messageId: "msg-quality-2", text: "Are the mangoes sweet?" })
-    );
-
-    expect(response.status).toBe(200);
-    expect(db.conversations[0]?.sales_state).toBe("awaiting_quantity");
-
-    const lastAssistantMessage = [...db.messages]
-      .filter((message) => message.role === "assistant")
-      .at(-1);
-
-    expect(lastAssistantMessage?.content).toContain("GI-tagged Devgad Alphonso");
-    expect(lastAssistantMessage?.content).toContain("How many boxes would you like?");
-    expect(db.aiCalls).toBe(0);
-  });
-
-  it("moves confirmed order edit requests to human handoff instead of repeating confirmation", async () => {
-    db.conversations.push(
-      createConversation(db, {
-        phone: "919000000000",
-        sales_state: "confirmed",
-      })
-    );
-
+  it("stores inbound and outbound messages and sends a natural reply through the webhook", async () => {
     const route = await importWebhookRoute(db);
     const response = await postWebhook(
       route,
-      buildWebhookPayload({ messageId: "msg-edit-confirmed", text: "Change" })
+      buildWebhookPayload({ messageId: "msg-hi", text: "Hi" })
     );
 
     expect(response.status).toBe(200);
-    expect(db.conversations[0]?.sales_state).toBe("human_handoff");
-
-    const lastAssistantMessage = [...db.messages]
-      .filter((message) => message.role === "assistant")
-      .at(-1);
-
-    expect(lastAssistantMessage?.content).toContain("moving this chat");
-    expect(lastAssistantMessage?.content).not.toContain("order is confirmed");
-    expect(db.aiCalls).toBe(0);
-  });
-
-  it("retries a transient optimistic lock conflict without duplicating the inbound webhook", async () => {
-    db.failNextConversationOptimisticUpdate = true;
-    const route = await importWebhookRoute(db);
-
-    const response = await postWebhook(
-      route,
-      buildWebhookPayload({ messageId: "msg-conflict", text: "Large 2" })
-    );
-
-    expect(response.status).toBe(200);
-
     const body = await response.json();
     expect(body.status).toBe("replied");
-    expect(db.conversations[0]?.sales_state).toBe("awaiting_name");
+    expect(db.aiCalls).toBe(1);
+    expect(db.conversations).toHaveLength(1);
     expect(db.sentReplies).toHaveLength(1);
     expect(db.messages.filter((message) => message.role === "user")).toHaveLength(1);
     expect(db.messages.filter((message) => message.role === "assistant")).toHaveLength(1);
-    expect(db.orders[0]).toMatchObject({
-      product_size: "large",
-      quantity: 2,
+
+    const lastAssistantMessage = [...db.messages]
+      .filter((message) => message.role === "assistant")
+      .at(-1);
+
+    expect(lastAssistantMessage?.content).toBe(
+      "Hi! Welcome to The Mango Lover Shop. What are you looking for today?"
+    );
+    expect(lastAssistantMessage?.whatsapp_msg_id).toMatch(/^wamid\./);
+    expect(db.sentReplies[0]?.body).toBe(lastAssistantMessage?.content);
+  });
+
+  it("builds AI context from recent history without duplicating the latest inbound message", async () => {
+    const conversation = createConversation(db, {
+      phone: "919000000000",
+      sales_state: "new",
     });
+    db.conversations.push(conversation);
+    for (let index = 0; index < 15; index += 1) {
+      db.messages.push(
+        createMessage(db, {
+          conversation_id: conversation.id,
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `history-${index + 1}`,
+        })
+      );
+    }
+
+    const route = await importWebhookRoute(db);
+    const response = await postWebhook(
+      route,
+      buildWebhookPayload({ messageId: "msg-history", text: "Need delivery in Mumbai" })
+    );
+
+    expect(response.status).toBe(200);
+    expect(db.aiCalls).toBe(1);
+    expect(db.aiRequests).toHaveLength(1);
+
+    const requestMessages = db.aiRequests[0]?.messages || [];
+    expect(requestMessages[0]?.role).toBe("system");
+    expect(requestMessages.filter((message) => message.content === "Need delivery in Mumbai")).toHaveLength(1);
+    expect(requestMessages.length).toBeLessThanOrEqual(14);
+    expect(requestMessages.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it("regenerates once when the first AI draft repeats a recent assistant reply", async () => {
+    const conversation = createConversation(db, {
+      phone: "919000000000",
+      sales_state: "new",
+    });
+    db.conversations.push(conversation);
+    db.messages.push(
+      createMessage(db, {
+        conversation_id: conversation.id,
+        role: "assistant",
+        content: "Large gives the best balance for most buyers.",
+      })
+    );
+    db.aiResponder = async () =>
+      db.aiCalls === 1
+        ? "Large gives the best balance for most buyers."
+        : "Large is the best fit for most buyers, and Jumbo works better if you're buying for gifting.";
+
+    const route = await importWebhookRoute(db);
+    const response = await postWebhook(
+      route,
+      buildWebhookPayload({ messageId: "msg-repeat", text: "which is best?" })
+    );
+
+    expect(response.status).toBe(200);
+    expect(db.aiCalls).toBe(2);
+    expect(db.sentReplies).toHaveLength(1);
+    expect(db.sentReplies[0]?.body).toBe(
+      "Large is the best fit for most buyers, and Jumbo works better if you're buying for gifting."
+    );
+  });
+
+  it("uses the safe fallback when AI generation fails", async () => {
+    db.aiResponder = async () => {
+      throw new Error("provider down");
+    };
+    const route = await importWebhookRoute(db);
+    const response = await postWebhook(
+      route,
+      buildWebhookPayload({ messageId: "msg-fallback", text: "price?" })
+    );
+
+    expect(response.status).toBe(200);
+    expect(db.sentReplies).toHaveLength(1);
+    expect(db.sentReplies[0]?.body).toBe(
+      "I'm here to help. Please tell me if you're looking for mango availability, pricing, delivery, or order support."
+    );
+    expect(db.messages.filter((message) => message.role === "assistant").at(-1)?.content).toBe(
+      "I'm here to help. Please tell me if you're looking for mango availability, pricing, delivery, or order support."
+    );
+  });
+
+  it("ignores duplicate inbound webhook deliveries without sending twice", async () => {
+    const route = await importWebhookRoute(db);
+
+    const firstResponse = await postWebhook(
+      route,
+      buildWebhookPayload({ messageId: "msg-duplicate", text: "Hi" })
+    );
+    const secondResponse = await postWebhook(
+      route,
+      buildWebhookPayload({ messageId: "msg-duplicate", text: "Hi" })
+    );
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect(db.sentReplies).toHaveLength(1);
+    expect(db.messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(db.messages.filter((message) => message.role === "assistant")).toHaveLength(1);
   });
 });
