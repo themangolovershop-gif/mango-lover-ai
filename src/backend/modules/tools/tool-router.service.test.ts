@@ -105,6 +105,43 @@ describe('tool-router.service', () => {
     expect(plan.tools.map((tool) => tool.name)).toContain('get_quote');
   });
 
+  it('routes generic pricing questions to the catalog overview tool', () => {
+    const plan = toolRouterService.decideToolPlan(
+      buildContext({
+        latestUserMessage: 'price?',
+        intents: ['pricing'],
+      })
+    );
+
+    expect(plan.tools.map((tool) => tool.name)).toContain('get_catalog_overview');
+  });
+
+  it('routes shop location questions to business knowledge', () => {
+    const plan = toolRouterService.decideToolPlan(
+      buildContext({
+        latestUserMessage: 'shop location?',
+        intents: ['unknown'],
+      })
+    );
+
+    expect(plan.tools.map((tool) => tool.name)).toContain('search_business_knowledge');
+  });
+
+  it('routes size and quantity order-start questions to a live quote', () => {
+    const plan = toolRouterService.decideToolPlan(
+      buildContext({
+        latestUserMessage: '2 dozen large chahiye',
+        intents: ['order_start'],
+        entities: {
+          quantityDozen: 2,
+          size: 'large',
+        },
+      })
+    );
+
+    expect(plan.tools.map((tool) => tool.name)).toContain('get_quote');
+  });
+
   it('routes reorder requests through history and draft creation', () => {
     const plan = toolRouterService.decideToolPlan(
       buildContext({

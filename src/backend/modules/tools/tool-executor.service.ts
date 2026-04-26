@@ -19,6 +19,7 @@ import { createPayment, listPayments, updatePayment } from '@/backend/modules/pa
 import { mapSizeToProductSize } from '@/backend/modules/products/product-helpers';
 import { getActiveProductBySize } from '@/backend/modules/products/product.service';
 import { buildOrderSummary } from '@/backend/modules/whatsapp/message-orchestrator.helpers';
+import { BRAND_CONTEXT } from '@/backend/shared/constants/brand';
 import { getPrismaClient } from '@/backend/shared/lib/prisma';
 import { normalizeMessage } from '@/backend/shared/utils/normalization';
 
@@ -248,6 +249,8 @@ export class ToolExecutorService {
         return this.verifyPayment(tool.args ?? {}, context);
       case 'get_product_by_size':
         return this.getProductBySize(tool.args ?? {}, context);
+      case 'get_catalog_overview':
+        return this.getCatalogOverview();
       case 'get_quote':
         return this.getQuote(tool.args ?? {}, context);
       case 'get_delivery_charge':
@@ -378,6 +381,53 @@ export class ToolExecutorService {
     };
   }
 
+  private async getCatalogOverview(): Promise<ToolExecutionResult> {
+    const prisma = getPrismaClient();
+    const products = await prisma.product.findMany({
+      where: {
+        active: true,
+      },
+      select: {
+        name: true,
+        size: true,
+        price: true,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    const medium = products.find((product) => product.size === ProductSize.MEDIUM);
+    const large = products.find((product) => product.size === ProductSize.LARGE);
+    const jumbo = products.find((product) => product.size === ProductSize.JUMBO);
+
+    const lines = [
+      medium
+        ? `Medium INR ${formatMoney(medium.price)} (${BRAND_CONTEXT.products.weights.medium})`
+        : null,
+      large
+        ? `Large INR ${formatMoney(large.price)} (${BRAND_CONTEXT.products.weights.large})`
+        : null,
+      jumbo
+        ? `Jumbo INR ${formatMoney(jumbo.price)} (${BRAND_CONTEXT.products.weights.jumbo})`
+        : null,
+    ].filter((line): line is string => Boolean(line));
+
+    return {
+      name: 'get_catalog_overview',
+      ok: lines.length > 0,
+      summary: `Active catalog: ${lines.join('; ')}.`,
+      replyHint: `Current premium mango availability is ${lines.join(', ')}. Tell me the size and quantity you want, and I will guide you properly from there.`,
+      data: {
+        products: products.map((product) => ({
+          name: product.name,
+          size: product.size,
+          price: Number(product.price.toString()),
+        })),
+      },
+    };
+  }
+
   private async getDeliveryCharge(
     args: Record<string, unknown>,
     context: ToolExecutionContext
@@ -480,9 +530,11 @@ export class ToolExecutorService {
     });
     const sizeLabel = product.size.toLowerCase();
     const cityText = city ? ` for ${titleCase(city)}` : '';
-    const replyHint = delivery.isEstimated
-      ? `The current quote for ${quantityDozen} dozen ${titleCase(sizeLabel)} Devgad Alphonso${cityText} is INR ${formatMoney(amounts.total)}. That uses the available pricing data, and I can confirm any extra city handling if needed.`
-      : `The current quote for ${quantityDozen} dozen ${titleCase(sizeLabel)} Devgad Alphonso${cityText} is INR ${formatMoney(amounts.total)}. If you want, I can prepare that for you now.`;
+    const replyHint = !city
+      ? `The base price for ${quantityDozen} dozen ${titleCase(sizeLabel)} Devgad Alphonso is INR ${formatMoney(amounts.subtotal)} before delivery handling. Share the delivery city, and I will guide you with the complete quote.`
+      : delivery.isEstimated
+        ? `The current quote for ${quantityDozen} dozen ${titleCase(sizeLabel)} Devgad Alphonso${cityText} is INR ${formatMoney(amounts.total)}. That uses the available pricing data, and I can confirm any extra city handling if needed.`
+        : `The current quote for ${quantityDozen} dozen ${titleCase(sizeLabel)} Devgad Alphonso${cityText} is INR ${formatMoney(amounts.total)}. If you want, I can prepare that for you now.`;
 
     return {
       name: 'get_quote',

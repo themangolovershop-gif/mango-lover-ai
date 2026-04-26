@@ -153,6 +153,29 @@ describe('master-agent.service', () => {
     expect(result.decision.primaryAgent).toBe('mango_expert');
     expect(result.responseText).toContain('naturally ripened');
   });
+
+  it('uses a grounded catalog overview for generic pricing questions', async () => {
+    const result = await masterAgent.process(
+      buildContext({
+        latestMessage: 'price?',
+        intents: ['pricing'],
+        primaryIntent: 'pricing',
+        groundingSnapshot: buildGroundingSnapshot([
+          {
+            name: 'get_catalog_overview' as any,
+            ok: true,
+            summary: 'Active catalog overview.',
+            replyHint:
+              'Current premium mango availability is Medium INR 1199, Large INR 1499, and Jumbo INR 1999. Tell me the size and quantity you want, and I will guide you from there.',
+          },
+        ]),
+      })
+    );
+
+    expect(result.responseText).toContain('Medium INR 1199');
+    expect(result.responseText).toContain('Large INR 1499');
+    expect(result.responseText).toContain('Jumbo INR 1999');
+  });
 });
 
 describe('response-composer', () => {

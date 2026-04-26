@@ -400,7 +400,7 @@ async function handleInboundTextMessage(
     // Prepare context for Intelligence Engine
     const normalizedText = normalizeMessage(text);
     const entities = extractEntities(normalizedText);
-    const intentResult = detectIntents(text);
+    const intentResult = detectIntents(normalizedText);
     const latestOrder = await getLatestConversationOrder(conversation.id);
 
     // Fetch history for grounding

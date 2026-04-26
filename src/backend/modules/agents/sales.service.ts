@@ -11,7 +11,7 @@ function getToolResult(
 
 export class SalesAgent {
   async respond(context: AgentContext): Promise<AgentResult> {
-    const quoteResult = getToolResult(context, ['get_quote', 'get_product_by_size', 'get_delivery_charge']);
+    const quoteResult = getToolResult(context, ['get_quote', 'get_product_by_size', 'get_delivery_charge', 'get_catalog_overview']);
     const businessResult = getToolResult(context, ['search_business_knowledge']);
     const memory = context.memorySnapshot;
     const personalization = memory?.personalization;
@@ -23,6 +23,16 @@ export class SalesAgent {
         summary: 'Provided grounded pricing guidance.',
         replyHint: quoteResult.replyHint,
         confidence: 0.98,
+        recommendedAction: context.nextAction,
+      };
+    }
+
+    if (businessResult?.replyHint) {
+      return {
+        agent: 'sales',
+        summary: 'Used grounded business knowledge for a direct factual reply.',
+        replyHint: businessResult.replyHint,
+        confidence: 0.94,
         recommendedAction: context.nextAction,
       };
     }

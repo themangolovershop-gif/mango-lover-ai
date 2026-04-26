@@ -18,6 +18,7 @@ const REPLY_HINT_PRIORITY: Array<ToolExecutionResult['name']> = [
   'reorder_last_order',
   'get_payment_status',
   'get_current_order_summary',
+  'get_catalog_overview',
   'get_quote',
   'get_last_successful_order',
   'search_mango_knowledge',

@@ -11,9 +11,18 @@ const REPLACEMENT_DICT: Record<string, string> = {
   'alpanso': 'alphonso',
   'alfanso': 'alphonso',
   'phonso': 'alphonso',
+  'pric': 'price',
+  'prce': 'price',
+  'prise': 'price',
   'medm': 'medium',
   'lrg': 'large',
   'jumboo': 'jumbo',
+  'locat': 'location',
+  'adress': 'address',
+  'qulity': 'quality',
+  'qualtiy': 'quality',
+  'quntity': 'quantity',
+  'quanti': 'quantity',
   'kal': 'tomorrow', // 'kal' in Hindi means yesterday/tomorrow
   'delivery?': 'delivery request',
   'payment don': 'payment done',
@@ -37,7 +46,7 @@ export const normalizeMessage = (input: string): string => {
   
   // 2. Remove non-essential punctuation that might mess up keyword matching
   // Keep numbers and letters
-  normalized = normalized.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' ');
+  normalized = normalized.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, ' ');
   normalized = normalized.replace(/\s{2,}/g, ' '); // Collapse double spaces
 
   // 3. Typo/Abbreviation Replacement

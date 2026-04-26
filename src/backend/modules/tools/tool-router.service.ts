@@ -35,6 +35,22 @@ function isPremiumBusinessQuery(text: string) {
   return includesAny(text, ['premium', 'why premium', 'website', 'legacy', 'family', 'policy']);
 }
 
+function isBusinessInfoQuery(text: string) {
+  return (
+    includesAny(text, ['location', 'shop', 'visit', 'pickup', 'website']) ||
+    (text.includes('where') && includesAny(text, ['shop', 'visit', 'located', 'location'])) ||
+    (text.includes('address') && !text.includes('change address') && !text.includes('wrong address'))
+  );
+}
+
+function isLogisticsPolicyQuery(text: string) {
+  return (
+    text.includes('courier') ||
+    text.includes('charge') ||
+    (text.includes('delivery') && includesAny(text, ['time', 'hours', 'days', 'metro', 'mumbai', 'how long']))
+  );
+}
+
 function wantsReorder(text: string) {
   return includesAny(text, [
     'same as previous',
@@ -136,7 +152,30 @@ export class ToolRouterService {
           reason: 'Customer asked about size pricing or selection.',
         });
         reasons.push('Use the active product record for the requested size.');
+      } else {
+        pushTool(tools, {
+          name: 'get_catalog_overview',
+          reason: 'Customer asked for generic pricing without a specific size.',
+        });
+        reasons.push('Use the live active catalog for the current base prices.');
       }
+    }
+
+    if (
+      (context.intents.includes('order_start') || context.intents.includes('product_selection')) &&
+      context.entities.size &&
+      context.entities.quantityDozen
+    ) {
+      pushTool(tools, {
+        name: 'get_quote',
+        args: {
+          size: context.entities.size,
+          quantityDozen: context.entities.quantityDozen,
+          city: context.entities.city,
+        },
+        reason: 'Customer already shared size and quantity while starting the order.',
+      });
+      reasons.push('Acknowledge the concrete order details with live pricing.');
     }
 
     if (context.intents.includes('delivery_check') && context.entities.city) {
@@ -201,6 +240,9 @@ export class ToolRouterService {
     }
 
     if (
+      isBusinessInfoQuery(latestMessage) ||
+      isLogisticsPolicyQuery(latestMessage) ||
+      context.intents.includes('delivery_check') ||
       isPremiumBusinessQuery(latestMessage) ||
       context.intents.includes('objection_price')
     ) {

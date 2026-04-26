@@ -1,3 +1,5 @@
+import { normalizeMessage } from '@/backend/shared/utils/normalization';
+
 export type IntentType = 
   | 'greeting'
   | 'pricing'
@@ -34,7 +36,7 @@ export interface DetectedIntentResult {
 }
 
 const INTENT_KEYWORDS: Record<IntentType, string[]> = {
-  greeting: ['hi', 'hello', 'hey', 'namaste', 'good morning', 'good afternoon', 'good evening'],
+  greeting: ['hi', 'hello', 'hey', 'namaste', 'good morning', 'good afternoon', 'good evening', 'kem cho', 'kem chi', 'kemcho'],
   pricing: ['price', 'rate', 'coast', 'cost', 'how much', 'kitna', 'bhav', 'menu'],
   product_selection: ['want', 'buy', 'need', 'ordering', 'selection'],
   recommendation_request: ['which', 'best', 'recommend', 'suggestion', 'difference'],
@@ -42,7 +44,7 @@ const INTENT_KEYWORDS: Record<IntentType, string[]> = {
   authenticity_check: ['original', 'real', 'authenticity', 'gi tag', 'gi-tagged', 'devgad', 'ratnagiri'],
   delivery_check: ['delivery', 'reach', 'courier', 'shipping', 'when'],
   availability_check: ['stock', 'available', 'have', 'milage', 'milinga'],
-  order_start: ['book', 'place', 'start', 'confirm', 'order'],
+  order_start: ['book', 'place', 'start', 'confirm', 'order', 'chahiye'],
   address_submission: ['address', 'residence', 'landmark', 'pincode', 'area', 'city'],
   payment_update: ['paid', 'payment', 'transfer', 'done', 'screenshot', 'reference'],
   discount_request: ['discount', 'offer', 'code', 'less', 'coupon'],
@@ -86,8 +88,20 @@ const INTENT_KEYWORDS: Record<IntentType, string[]> = {
  * Detects customer intents from normalized text using a rule-based keyword matcher.
  * This is designed to be the first pass before potentially calling an AI model.
  */
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasKeywordMatch(text: string, keyword: string) {
+  if (keyword.includes(' ')) {
+    return text.includes(keyword);
+  }
+
+  return new RegExp(`(^|\\s)${escapeRegex(keyword)}($|\\s)`).test(text);
+}
+
 export const detectIntents = (text: string): DetectedIntentResult => {
-  const normalizedText = text.toLowerCase();
+  const normalizedText = normalizeMessage(text);
   const matchedIntents: { type: IntentType; score: number }[] = [];
 
   for (const [intent, keywords] of Object.entries(INTENT_KEYWORDS)) {
@@ -95,7 +109,7 @@ export const detectIntents = (text: string): DetectedIntentResult => {
     
     let score = 0;
     keywords.forEach(keyword => {
-      if (normalizedText.includes(keyword)) {
+      if (hasKeywordMatch(normalizedText, keyword)) {
         score += 1;
       }
     });

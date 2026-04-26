@@ -50,11 +50,11 @@ export const BUSINESS_KNOWLEDGE_ARTICLES: KnowledgeArticle[] = [
     domain: 'business',
     category: 'business_policy',
     title: 'Perishable Logistics Caution',
-    keywords: ['delivery', 'logistics', 'perishable', 'city', 'shipping', 'availability'],
+    keywords: ['delivery', 'logistics', 'perishable', 'city', 'shipping', 'availability', 'courier', 'charge', '24 hours', '2 days', 'metro'],
     content:
       'The brand is based in Thane, Maharashtra, with a visit address at 1st Floor, The Walk, Hiranandani Estate, Thane, Mumbai. Primary delivery cities are Mumbai, Thane, and Navi Mumbai. Mumbai delivery is usually targeted within 24 hours, and air courier to metro cities is usually around 2 days. The reference courier charge is INR 130 per kg, but exact delivery guidance depends on the city, quantity, and the current seasonal batch.',
     customerReply:
-      'We are based in Thane, Maharashtra, and our visit address is 1st Floor, The Walk, Hiranandani Estate, Thane, Mumbai. Mumbai delivery is usually targeted within 24 hours, and air courier to metro cities is usually around 2 days, but the exact handling still depends on your city and the current batch.',
+      'We are based in Thane, Maharashtra, and our visit address is 1st Floor, The Walk, Hiranandani Estate, Thane, Mumbai. Mumbai delivery is usually targeted within 24 hours, metro air courier is usually around 2 days, and the current reference courier charge is INR 130 per kg, although the final total still depends on city, quantity, and handling.',
   },
   {
     id: 'business-customer-handling',

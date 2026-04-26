@@ -20,6 +20,7 @@ export type ToolName =
   | 'mark_payment_submitted'
   | 'verify_payment'
   | 'get_product_by_size'
+  | 'get_catalog_overview'
   | 'get_quote'
   | 'get_delivery_charge'
   | 'get_customer_memory'
