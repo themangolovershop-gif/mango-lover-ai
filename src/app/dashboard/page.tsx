@@ -300,7 +300,7 @@ function Header({ onLogout, activeTab, setActiveTab }: { onLogout: () => void; a
         </div>
 
         <nav className="flex items-center gap-1">
-          {["inbox", "logs"].map(t => (
+          {["inbox", "pricing", "logs"].map(t => (
             <button
               key={t}
               onClick={() => setActiveTab(t)}
@@ -616,6 +616,153 @@ function LogsView({ logs }: { logs: WebhookLog[] }) {
   );
 }
 
+// ─── PRICING VIEW ────────────────────────────────────────────────────────────
+function PricingView() {
+  const [prices, setPrices] = useState<Record<string, { retail: number; corporate: number }>>({
+    MEDIUM: { retail: 1499, corporate: 2999 },
+    LARGE: { retail: 1999, corporate: 3499 },
+    JUMBO: { retail: 2499, corporate: 3999 },
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [alert, setAlert] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  useEffect(() => {
+    async function fetchPrices() {
+      try {
+        const res = await fetch("/api/pricing");
+        if (res.ok) {
+          const data = await res.json();
+          const mapped: Record<string, { retail: number; corporate: number }> = {};
+          data.forEach((p: any) => {
+            mapped[p.size] = { retail: p.price, corporate: p.corporatePrice };
+          });
+          setPrices((prev) => ({ ...prev, ...mapped }));
+        }
+      } catch (err) {
+        console.error("Failed to fetch prices", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchPrices();
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    setAlert(null);
+    try {
+      const res = await fetch("/api/pricing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prices }),
+      });
+      if (res.ok) {
+        setAlert({ type: "success", message: "Live pricing saved and synced with AI prompt!" });
+      } else {
+        setAlert({ type: "error", message: "Failed to update pricing." });
+      }
+    } catch {
+      setAlert({ type: "error", message: "An error occurred while saving." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#070d1b] opacity-50">
+        <RefreshCw size={24} className="animate-spin text-amber-500 mb-4" />
+        <span className="text-[11px] uppercase tracking-[0.2em] font-bold text-white/40">Loading active rates...</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-12 bg-[#070d1b] fade-in">
+      <div className="max-w-3xl mx-auto">
+        <h2 className="text-xl font-bold text-white mb-1">Farmer Pricing Dashboard</h2>
+        <p className="text-[12px] text-white/20 mb-8 uppercase tracking-widest font-bold">Manage Retail & Corporate Rates</p>
+
+        {alert && (
+          <div className={`p-4 rounded-xl border mb-6 text-xs font-semibold flex items-center gap-2 ${
+            alert.type === "success" 
+              ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" 
+              : "bg-rose-500/10 border-rose-500/20 text-rose-400"
+          }`}>
+            <CheckCircle2 size={16} />
+            {alert.message}
+          </div>
+        )}
+
+        <div className="rounded-2xl border border-white/5 bg-white/2 overflow-hidden mb-8 p-6 space-y-6">
+          <div className="grid grid-cols-3 gap-6 font-bold text-[10px] text-white/25 uppercase tracking-widest border-b border-white/5 pb-4">
+            <div>Box Size</div>
+            <div>Retail Price (Dozen)</div>
+            <div>Corporate Price (10+ Boxes)</div>
+          </div>
+
+          {(["MEDIUM", "LARGE", "JUMBO"] as const).map((size) => {
+            const sizeLabels = {
+              MEDIUM: { label: "Medium (M)", desc: "181–220g per piece" },
+              LARGE: { label: "Large (L)", desc: "221–260g per piece" },
+              JUMBO: { label: "Jumbo (J)", desc: "261–300g per piece" },
+            };
+
+            return (
+              <div key={size} className="grid grid-cols-3 gap-6 items-center py-2 border-b border-white/5 last:border-b-0 pb-6 last:pb-2">
+                <div>
+                  <h4 className="text-[13px] font-bold text-white/90">{sizeLabels[size].label}</h4>
+                  <p className="text-[10px] text-white/25 mt-0.5 font-medium">{sizeLabels[size].desc}</p>
+                </div>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-white/20">₹</span>
+                  <input
+                    type="number"
+                    value={prices[size]?.retail ?? ""}
+                    onChange={(e) =>
+                      setPrices((prev) => ({
+                        ...prev,
+                        [size]: { ...prev[size]!, retail: Number(e.target.value) },
+                      }))
+                    }
+                    className="w-full rounded-xl border border-white/5 bg-white/2 pl-8 pr-4 py-3 text-sm text-white outline-none focus:border-amber-500/40 transition-all font-mono"
+                  />
+                </div>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-white/20">₹</span>
+                  <input
+                    type="number"
+                    value={prices[size]?.corporate ?? ""}
+                    onChange={(e) =>
+                      setPrices((prev) => ({
+                        ...prev,
+                        [size]: { ...prev[size]!, corporate: Number(e.target.value) },
+                      }))
+                    }
+                    className="w-full rounded-xl border border-white/5 bg-white/2 pl-8 pr-4 py-3 text-sm text-white outline-none focus:border-amber-500/40 transition-all font-mono"
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="rounded-xl bg-amber-500 px-6 py-3.5 text-xs font-bold text-[#070d1b] uppercase tracking-wider transition-all hover:bg-amber-400 active:scale-[0.98] disabled:opacity-20 disabled:cursor-not-allowed flex items-center gap-2 shadow-[0_0_15px_rgba(245,158,11,0.2)]"
+          >
+            {saving ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
+            {saving ? "Saving Changes" : "Save & Sync Rates"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── DASHBOARD APP ───────────────────────────────────────────────────────────
 function DashboardApp({ onLogout }: { onLogout: () => void }) {
   const [activeTab, setActiveTab] = useState("inbox");
@@ -803,6 +950,8 @@ function DashboardApp({ onLogout }: { onLogout: () => void }) {
               onHandoff={handleHandoff}
             />
           </>
+        ) : activeTab === "pricing" ? (
+          <PricingView />
         ) : (
           <LogsView logs={logs} />
         )}

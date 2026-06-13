@@ -387,6 +387,7 @@ model Product {
   slug              String      @unique
   size              ProductSize
   price             Decimal     @db.Decimal(10, 2)
+  corporatePrice    Decimal     @db.Decimal(10, 2) @default(0.00)
   active            Boolean     @default(true)
   cityRulesJson     Json?
   deliveryRulesJson Json?
